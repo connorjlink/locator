@@ -4,6 +4,22 @@ import cartopy.feature as cfeature
 from matplotlib.patches import Rectangle, ConnectionPatch
 import math
 
+# TODO: import photo directory logic
+# want to parse the caption/keywords metadata for location name information (or file_name)?
+# want to parse the lat/long metadata for coordinates here
+# TODO: determine how to crop the zoom region? automatically center the POI +- some margin?
+# TODO: determine how to crop the world region? maybe fixed according to country information?
+    # could look up the country boundaries from cartopy per lat/long and build a bounding box
+    # could set custom regions per known locations in a config file? per-country basis?
+        # e.g., set one for USA (continental), one for mainland UK, etc.
+
+# TODO: allow for custom styling light/dark themes: maybe import theme from file? w/ swatches
+
+# TODO: want a way, maybe to figure out location data smartly from lat/long (lookup on-line?)
+
+# TODO: want to plot a world map bounding box minimum around the custom bounding boxes of the countries referenced in the directory, finish the directory parse with a star plot of every photo location
+    # final result is a locator map of all photo locations in the directory
+
 location = {"lat": 52.6698042403715, "lon": -8.577276842533156} 
 zoom_region = [-8.742559512271514, -8.510014263814636, 52.614007667018164, 52.71198728589052]
 world_region = [-11.0, -5.0, 50.5, 56.5]
