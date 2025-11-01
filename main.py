@@ -4,7 +4,7 @@ import cartopy.feature as cfeature
 from matplotlib.patches import Rectangle, ConnectionPatch
 import math
 
-location = {"lat": 52.6798042403715, "lon": -8.577276842533156} 
+location = {"lat": 52.6698042403715, "lon": -8.577276842533156} 
 zoom_region = [-8.742559512271514, -8.510014263814636, 52.614007667018164, 52.71198728589052]
 world_region = [-11.0, -5.0, 50.5, 56.5]
 
@@ -21,7 +21,7 @@ insetcolor = "#880000"
 
 inset_size = 0.30
 title_main = "Limerick, Ireland"
-title_inset = "Thomond Village, UL"
+title_inset = "The University of Limerick"
 
 def geographic_aspect(lon_min, lon_max, lat_min, lat_max):
     mean_lat = (lat_min + lat_max) / 2
@@ -170,6 +170,6 @@ for (lon, lat), (xB, yB) in zip(corners_main, corners_inset):
     )
     fig.add_artist(conn)
 
-plt.savefig("locator_map_styled.svg", bbox_inches="tight")
+#plt.savefig("locator_map_styled.svg", bbox_inches="tight")
 plt.savefig("locator_map_styled.png", bbox_inches="tight", dpi=300)
 plt.show()
