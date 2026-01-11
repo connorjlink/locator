@@ -120,7 +120,7 @@ def _auto_region_from_points(points: list[tuple[float, float]]) -> Region:
     lat0, lat1 = min(lats), max(lats)
     lon0, lon1 = min(lons), max(lons)
 
-    # If points span most of the globe, fall back to a global-ish region.
+    # if points span most of the globe, fall back to a global-ish region.
     if (lon1 - lon0) > 180:
         return Region(-180.0, 180.0, max(-80.0, lat0 - 5.0), min(80.0, lat1 + 5.0)).normalized()
 
@@ -136,6 +136,7 @@ def render_summary_map(
     points_lat_lon: list[tuple[float, float]],
     min_distance_m: float,
     caption: str | None,
+    world_region: Region | None,
     theme: dict[str, Any],
     out_path: str,
     dpi: int,
@@ -144,7 +145,7 @@ def render_summary_map(
 ) -> None:
     proj = ccrs.PlateCarree()
 
-    world_region = _auto_region_from_points(points_lat_lon)
+    world_region = (world_region or _auto_region_from_points(points_lat_lon)).normalized()
     aspect_main = geographic_aspect(world_region)
     fig_h = fig_width_in * aspect_main
     fig = plt.figure(figsize=(fig_width_in, fig_h), dpi=dpi)
@@ -159,7 +160,7 @@ def render_summary_map(
 
     clusters = cluster_points(points_lat_lon, min_distance_m=min_distance_m)
     for lat, lon, count in clusters:
-        # Slightly scale star size for clusters, but keep it subtle.
+        # slightly scale star size for clusters, but keep it subtle.
         ms = 7.0 + min(6.0, 1.5 * math.log10(max(1, count)))
         ax.plot(lon, lat, marker="*", color=theme["starcolor"], markersize=ms, transform=proj, zorder=6)
 
@@ -502,10 +503,22 @@ def main(argv: list[str] | None = None) -> int:
     # Summary mode: a single zoomed-out map containing all points.
     if args.summary_points:
         points = _read_points_csv(args.summary_points)
+
+        # Only treat --world-region as an explicit override if the user supplied
+        # something different from the default. This preserves the convenient
+        # auto-fit behavior unless an upstream caller (e.g. driver.jl) chooses
+        # to provide explicit bounds.
+        default_world = DEFAULT_WORLD_REGION.as_extent()
+        override_world = args.world_region
+        summary_world_region: Region | None = None
+        if list(override_world) != list(default_world):
+            summary_world_region = parse_region([str(x) for x in override_world])
+
         render_summary_map(
             points_lat_lon=points,
             min_distance_m=float(args.min_distance_m),
             caption=args.caption,
+            world_region=summary_world_region,
             theme=theme,
             out_path=args.out,
             dpi=args.dpi,

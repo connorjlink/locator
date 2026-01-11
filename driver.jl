@@ -311,6 +311,75 @@ struct PhotoRectangle
     maximum_longitude::Float64
 end
 
+function clamp_rect(r::PhotoRectangle)
+    return PhotoRectangle(
+        clamp_latitude(r.minimum_latitude),
+        clamp_latitude(r.maximum_latitude),
+        clamp_longitude(r.minimum_longitude),
+        clamp_longitude(r.maximum_longitude),
+    )
+end
+
+function union_rect(a::PhotoRectangle, b::PhotoRectangle)
+    return PhotoRectangle(
+        min(a.minimum_latitude, b.minimum_latitude),
+        max(a.maximum_latitude, b.maximum_latitude),
+        min(a.minimum_longitude, b.minimum_longitude),
+        max(a.maximum_longitude, b.maximum_longitude),
+    )
+end
+
+function rect_from_points(points::Vector{Tuple{Float64, Float64}})
+    isempty(points) && return nothing
+    lats = [p[1] for p in points]
+    lons = [p[2] for p in points]
+    return clamp_rect(PhotoRectangle(minimum(lats), maximum(lats), minimum(lons), maximum(lons)))
+end
+
+function collection_world_rect(
+    by_country::Dict{String, Vector{Tuple{String, PhotoMetadata}}},
+    all_gps_points::Vector{Tuple{Float64, Float64}},
+)
+    # Union of available country rectangles (one per country, if present).
+    rects = PhotoRectangle[]
+    for country in keys(by_country)
+        entries = by_country[country]
+        country_rect = nothing
+        for (_, md) in entries
+            if md.rectangle !== nothing
+                country_rect = md.rectangle
+                break
+            end
+        end
+        country_rect !== nothing && push!(rects, clamp_rect(country_rect))
+    end
+
+    world = nothing
+    for r in rects
+        world = world === nothing ? r : union_rect(world, r)
+    end
+
+    # Ensure we still include all points (in case reverse-geocode/country name matching fails).
+    points_rect = rect_from_points(all_gps_points)
+    if world === nothing
+        world = points_rect
+    elseif points_rect !== nothing
+        world = union_rect(world, points_rect)
+    end
+
+    world === nothing && return nothing
+
+    # If the span is very wide, prefer a global-ish extent (avoids dateline issues).
+    lon_span = world.maximum_longitude - world.minimum_longitude
+    if lon_span > 180
+        lat0 = max(-80.0, world.minimum_latitude - 5.0)
+        lat1 = min(80.0, world.maximum_latitude + 5.0)
+        return PhotoRectangle(lat0, lat1, -180.0, 180.0)
+    end
+
+    return world
+end
+
 struct PhotoMetadata
     latitude::Union{Float64, Nothing}
     longitude::Union{Float64, Nothing}
@@ -532,7 +601,13 @@ function write_points_csv(path::AbstractString, points::Vector{Tuple{Float64, Fl
     return path
 end
 
-function maybe_render_summary_map(points::Vector{Tuple{Float64, Float64}}, caption::Union{String, Nothing}, outpath::AbstractString, collection::CollectionMetadata)
+function maybe_render_summary_map(
+    points::Vector{Tuple{Float64, Float64}},
+    caption::Union{String, Nothing},
+    outpath::AbstractString,
+    collection::CollectionMetadata;
+    world_rect::Union{PhotoRectangle, Nothing} = nothing,
+)
     isempty(points) && return nothing
     collection.snapshot_script === nothing && return nothing
     isfile(collection.snapshot_script) || error("snapshot script not found: $(collection.snapshot_script)")
@@ -552,6 +627,14 @@ function maybe_render_summary_map(points::Vector{Tuple{Float64, Float64}}, capti
         "--out", outpath,
         "--dpi", "300",
     ]
+
+    if world_rect !== nothing
+        append!(cmd_parts, Any[
+            "--world-region",
+            string(world_rect.minimum_longitude), string(world_rect.maximum_longitude),
+            string(world_rect.minimum_latitude), string(world_rect.maximum_latitude),
+        ])
+    end
     if collection.theme_file !== nothing
         append!(cmd_parts, Any["--theme", collection.theme_file])
     end
@@ -919,20 +1002,26 @@ if target_directory != ""
         end
     end
 
-    # Render summary maps (collection + per-country)
+    # render summary maps (collection + per-country)
     summary_outdir = resolve_summary_output_dir(collection_metadata)
     if summary_outdir !== nothing
-        # Collection summary
+        world_rect = collection_world_rect(by_country, all_gps_points)
+
+        # collection summary
         caption = build_summary_caption(total_photos, valid_dates)
         collection_out = joinpath(summary_outdir, "collection-summary.png")
-        maybe_render_summary_map(all_gps_points, caption, collection_out, collection_metadata)
+        maybe_render_summary_map(all_gps_points, caption, collection_out, collection_metadata; world_rect = world_rect)
 
-        # Per-country summaries
+        # per-country summaries
         for country in sort(collect(keys(by_country)))
             entries = by_country[country]
             points = Tuple{Float64, Float64}[]
             dates = DateTime[]
+            country_rect = nothing
             for (_, md) in entries
+                if country_rect === nothing && md.rectangle !== nothing
+                    country_rect = md.rectangle
+                end
                 if md.latitude !== nothing && md.longitude !== nothing
                     push!(points, (md.latitude, md.longitude))
                 end
@@ -944,7 +1033,7 @@ if target_directory != ""
             cc = sanitize_filename_component(country)
             outpath = joinpath(summary_outdir, "country-$(cc).png")
             cap = build_summary_caption(length(entries), dates)
-            maybe_render_summary_map(points, cap, outpath, collection_metadata)
+            maybe_render_summary_map(points, cap, outpath, collection_metadata; world_rect = country_rect)
         end
         if !isempty(unknown)
             points = Tuple{Float64, Float64}[]
