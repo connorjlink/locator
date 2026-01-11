@@ -57,8 +57,7 @@ ax_inset.add_feature(cfeature.COASTLINE, linewidth=0.25)
 ax_inset.add_feature(cfeature.RIVERS, linewidth=0.5, facecolor=watercolor)
 ax_inset.add_feature(cfeature.OCEAN, linewidth=0.5, facecolor=watercolor)
 ax_inset.add_feature(cfeature.LAKES, linewidth=0.5, facecolor=watercolor)
-ax_inset.plot(location["lon"], location["lat"], marker="*", color=gold,
-              markersize=9, transform=proj, zorder=5)
+ax_inset.plot(location["lon"], location["lat"], marker="*", color=gold, markersize=9, transform=proj, zorder=5)
 
 ax_inset.text(
     0.02, 0.97, title_inset,
