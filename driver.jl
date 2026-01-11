@@ -8,6 +8,7 @@ using ReverseGeocode, StaticArrays
 gc = Geocoder()
 
 using Dates
+using SHA
 
 using ArchGDAL, DataFrames
 dataset = ArchGDAL.open("ne_10m_admin_0_countries.shp")
@@ -50,6 +51,18 @@ struct CollectionMetadata
     clock_size_px::Int
     clock_stroke_px::Float64
     overwrite_clock_svgs::Bool
+
+    # Python map rendering
+    python_command::String
+    snapshot_script::Union{String, Nothing}
+    map_output_dir::Union{String, Nothing}
+    overwrite_maps::Bool
+    show_maps::Bool
+
+    # Summary (collection / country) rendering
+    generate_summary_maps::Bool
+    summary_min_distance_m::Float64
+    summary_output_dir::Union{String, Nothing}
 end
 
 function with_directory(collection::CollectionMetadata, directory::AbstractString)
@@ -65,6 +78,14 @@ function with_directory(collection::CollectionMetadata, directory::AbstractStrin
         collection.clock_size_px,
         collection.clock_stroke_px,
         collection.overwrite_clock_svgs,
+        collection.python_command,
+        collection.snapshot_script,
+        collection.map_output_dir,
+        collection.overwrite_maps,
+        collection.show_maps,
+        collection.generate_summary_maps,
+        collection.summary_min_distance_m,
+        collection.summary_output_dir,
     )
 end
 
@@ -81,6 +102,14 @@ function with_photo_locations(collection::CollectionMetadata, locations::Vector{
         collection.clock_size_px,
         collection.clock_stroke_px,
         collection.overwrite_clock_svgs,
+        collection.python_command,
+        collection.snapshot_script,
+        collection.map_output_dir,
+        collection.overwrite_maps,
+        collection.show_maps,
+        collection.generate_summary_maps,
+        collection.summary_min_distance_m,
+        collection.summary_output_dir,
     )
 end
 
@@ -115,12 +144,26 @@ function parse_arguments(args::Vector{String})
     clock_stroke_px = 2.0
     overwrite_clock_svgs = false
 
+    # python defaults
+    python_command = "python"
+    snapshot_script = joinpath(@__DIR__, "snapshot.py")
+    map_output_dir = nothing
+    overwrite_maps = false
+    show_maps = false
+
+    # summary defaults
+    generate_summary_maps = true
+    summary_min_distance_m = 100.0
+    summary_output_dir = nothing
+
     i = 1
     while i <= length(args)
         a = args[i]
         if a in ("--help", "-h")
             println("Usage: julia driver.jl [--dir PATH] [--theme-file PATH] [--zoom-area DEG2] [--zoom-aspect 16:9|1.777] [--non-interactive]\n")
             println("Defaults: --zoom-area 0.125, --zoom-aspect 16:9")
+            println("Python map rendering: --python python --snapshot-script snapshot.py [--map-dir DIR] [--overwrite-maps] [--show-maps]")
+            println("Summary maps: [--no-summary] [--summary-min-distance METERS] [--summary-dir DIR]")
             exit(0)
         elseif a in ("--dir", "-d")
             i += 1
@@ -164,6 +207,34 @@ function parse_arguments(args::Vector{String})
             clock_stroke_px = v
         elseif a == "--overwrite-clocks"
             overwrite_clock_svgs = true
+        elseif a == "--python"
+            i += 1
+            i <= length(args) || error("Missing value for --python")
+            python_command = args[i]
+        elseif a == "--snapshot-script"
+            i += 1
+            i <= length(args) || error("Missing value for --snapshot-script")
+            snapshot_script = args[i]
+        elseif a == "--map-dir"
+            i += 1
+            i <= length(args) || error("Missing value for --map-dir")
+            map_output_dir = args[i]
+        elseif a == "--overwrite-maps"
+            overwrite_maps = true
+        elseif a == "--show-maps"
+            show_maps = true
+        elseif a == "--no-summary"
+            generate_summary_maps = false
+        elseif a == "--summary-min-distance"
+            i += 1
+            i <= length(args) || error("Missing value for --summary-min-distance")
+            v = tryparse(Float64, args[i])
+            (v === nothing || v < 0) && error("Invalid --summary-min-distance: $(args[i])")
+            summary_min_distance_m = v
+        elseif a == "--summary-dir"
+            i += 1
+            i <= length(args) || error("Missing value for --summary-dir")
+            summary_output_dir = args[i]
         elseif startswith(a, "-")
             error("Unknown argument: $a")
         else
@@ -185,6 +256,16 @@ function parse_arguments(args::Vector{String})
         clock_size_px,
         clock_stroke_px,
         overwrite_clock_svgs,
+
+        python_command,
+        snapshot_script === nothing ? nothing : abspath(snapshot_script),
+        map_output_dir === nothing ? nothing : abspath(map_output_dir),
+        overwrite_maps,
+        show_maps,
+
+        generate_summary_maps,
+        summary_min_distance_m,
+        summary_output_dir === nothing ? nothing : abspath(summary_output_dir),
     )
 end
 
@@ -402,6 +483,95 @@ function resolve_clock_output_dir(collection::CollectionMetadata)
     return outdir
 end
 
+function resolve_map_output_dir(collection::CollectionMetadata)
+    collection.directory === nothing && return nothing
+
+    base = collection.directory
+    outdir = collection.map_output_dir === nothing ? joinpath(base, "_locator_maps") : collection.map_output_dir
+    is_within_dir(outdir, base) || error("Cannot write maps outside photo directory. map-dir=$outdir base=$base")
+    mkpath(outdir)
+    return outdir
+end
+
+function resolve_summary_output_dir(collection::CollectionMetadata)
+    collection.generate_summary_maps || return nothing
+    collection.directory === nothing && return nothing
+
+    base = collection.directory
+    outdir = collection.summary_output_dir === nothing ? joinpath(base, "_locator_summaries") : collection.summary_output_dir
+    is_within_dir(outdir, base) || error("Cannot write summaries outside photo directory. summary-dir=$outdir base=$base")
+    mkpath(outdir)
+    return outdir
+end
+
+function is_valid_collection_date(dt::DateTime)
+    year(dt) < 2000 && return false
+    dt > Dates.now() && return false
+    return true
+end
+
+function build_date_range_string(dates::Vector{DateTime})
+    isempty(dates) && return nothing
+    dmin = minimum(dates)
+    dmax = maximum(dates)
+    return "$(format_taken_date(dmin)) – $(format_taken_date(dmax))"
+end
+
+function build_summary_caption(photo_count::Int, dates::Vector{DateTime})
+    range = build_date_range_string(dates)
+    range === nothing && return "$(photo_count) Photos"
+    return "$(photo_count) Photos. $(range)"
+end
+
+function write_points_csv(path::AbstractString, points::Vector{Tuple{Float64, Float64}})
+    open(path, "w") do io
+        for (lat, lon) in points
+            println(io, "$(lat),$(lon)")
+        end
+    end
+    return path
+end
+
+function maybe_render_summary_map(points::Vector{Tuple{Float64, Float64}}, caption::Union{String, Nothing}, outpath::AbstractString, collection::CollectionMetadata)
+    isempty(points) && return nothing
+    collection.snapshot_script === nothing && return nothing
+    isfile(collection.snapshot_script) || error("snapshot script not found: $(collection.snapshot_script)")
+
+    if isfile(outpath) && !collection.overwrite_maps
+        return outpath
+    end
+
+    points_csv = outpath * ".points.csv"
+    write_points_csv(points_csv, points)
+
+    cmd_parts = Any[
+        collection.python_command,
+        collection.snapshot_script,
+        "--summary-points", points_csv,
+        "--min-distance-m", string(collection.summary_min_distance_m),
+        "--out", outpath,
+        "--dpi", "300",
+    ]
+    if collection.theme_file !== nothing
+        append!(cmd_parts, Any["--theme", collection.theme_file])
+    end
+    if caption !== nothing
+        append!(cmd_parts, Any["--caption", caption])
+    end
+    if !collection.show_maps
+        push!(cmd_parts, "--no-show")
+    end
+
+    cmd = Cmd(cmd_parts)
+    try
+        run(cmd)
+    catch e
+        @warn "Python snapshot.py summary render failed" exception = (e, catch_backtrace())
+        return nothing
+    end
+    return outpath
+end
+
 function clock_svg_string(dt::DateTime; size_px::Int = 64, stroke_px::Float64 = 2.0)
     size = float(size_px)
     cx = size / 2
@@ -458,6 +628,94 @@ function maybe_generate_clock_svg(image_path::AbstractString, dt::Union{DateTime
     open(outpath, "w") do io
         write(io, svg)
     end
+    return outpath
+end
+
+function build_caption(md::PhotoMetadata)
+    parts = String[]
+    md.date_string !== nothing && push!(parts, md.date_string)
+    md.location_string !== nothing && push!(parts, md.location_string)
+    isempty(parts) && return nothing
+    return join(parts, " • ")
+end
+
+function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collection::CollectionMetadata)
+    # Needs GPS and zoom rectangle to be meaningful.
+    (md.latitude === nothing || md.longitude === nothing || md.zoom_rectangle === nothing) && return nothing
+    collection.snapshot_script === nothing && return nothing
+    isfile(collection.snapshot_script) || error("snapshot script not found: $(collection.snapshot_script)")
+
+    outdir = resolve_map_output_dir(collection)
+    outdir === nothing && return nothing
+
+    base = sanitize_filename_component(splitext(basename(image_path))[1])
+    digest = bytes2hex(sha1(image_path))[1:10]
+    outpath = joinpath(outdir, "$(base)-$(digest).png")
+
+    if isfile(outpath) && !collection.overwrite_maps
+        return outpath
+    end
+
+    # World region: prefer country bounds; otherwise, expand zoom bounds.
+    world = md.rectangle
+    if world === nothing
+        zr = md.zoom_rectangle
+        # Expand zoom by factor for a usable overview.
+        w = (zr.maximum_longitude - zr.minimum_longitude)
+        h = (zr.maximum_latitude - zr.minimum_latitude)
+        lon_pad = max(0.5, 6 * w)
+        lat_pad = max(0.5, 6 * h)
+        world = PhotoRectangle(
+            zr.minimum_latitude - lat_pad,
+            zr.maximum_latitude + lat_pad,
+            zr.minimum_longitude - lon_pad,
+            zr.maximum_longitude + lon_pad,
+        )
+    end
+
+    zoom = md.zoom_rectangle
+    caption = build_caption(md)
+    title_main = md.country === nothing ? "Unknown" : md.country
+    title_inset = md.location_string === nothing ? "Location" : md.location_string
+
+    cmd_parts = Any[
+        collection.python_command,
+        collection.snapshot_script,
+        "--world-region",
+        string(world.minimum_longitude), string(world.maximum_longitude),
+        string(world.minimum_latitude), string(world.maximum_latitude),
+        "--zoom-region",
+        string(zoom.minimum_longitude), string(zoom.maximum_longitude),
+        string(zoom.minimum_latitude), string(zoom.maximum_latitude),
+        "--star",
+        string(md.latitude), string(md.longitude),
+        "--title-main", title_main,
+        "--title-inset", title_inset,
+        "--out", outpath,
+        "--dpi", "300",
+    ]
+
+    if collection.theme_file !== nothing
+        append!(cmd_parts, Any["--theme", collection.theme_file])
+    end
+    if caption !== nothing
+        append!(cmd_parts, Any["--caption", caption])
+    end
+    if md.clock_svg_path !== nothing
+        append!(cmd_parts, Any["--clock-svg", md.clock_svg_path, "--clock-size", string(collection.clock_size_px)])
+    end
+    if !collection.show_maps
+        push!(cmd_parts, "--no-show")
+    end
+
+    cmd = Cmd(cmd_parts)
+    try
+        run(cmd)
+    catch e
+        @warn "Python snapshot.py failed for $image_path" exception = (e, catch_backtrace())
+        return nothing
+    end
+
     return outpath
 end
 
@@ -546,16 +804,24 @@ if target_directory != ""
     collection_metadata = with_directory(collection_metadata, target_directory)
 
     seen_locations = Set{Tuple{Float64, Float64}}()
+    all_gps_points = Tuple{Float64, Float64}[]
+    valid_dates = DateTime[]
+    total_photos = 0
 
     photo_index = Dict{String, Union{PhotoMetadata, Nothing}}()
     image_paths = collect_image_files(target_directory)
+    total_photos = length(image_paths)
     println("Found $(length(image_paths)) image files...")
     for p in image_paths
         println("Parsing $p...")
 
         metadata = parse_photo_metadata(p, collection_metadata)
+        if metadata !== nothing && metadata.taken_at !== nothing && is_valid_collection_date(metadata.taken_at)
+            push!(valid_dates, metadata.taken_at)
+        end
         if metadata !== nothing && metadata.latitude !== nothing && metadata.longitude !== nothing
             push!(seen_locations, canonical_latlon(metadata.latitude, metadata.longitude))
+            push!(all_gps_points, (metadata.latitude, metadata.longitude))
             city, country = get_city_country_from_coordinates(metadata.latitude, metadata.longitude)
             rectangle = nothing
             zoom_rectangle = compute_zoom_rectangle(metadata.latitude, metadata.longitude, collection_metadata.zoom_area_deg2, collection_metadata.zoom_aspect_ratio)
@@ -592,6 +858,9 @@ if target_directory != ""
                 zoom_rectangle,
                 clock_svg_path,
             )
+
+            map_path = maybe_render_map(p, metadata, collection_metadata)
+            map_path !== nothing && println("  -> map=$map_path")
         elseif metadata !== nothing
             # still generate clock even if GPS missing, if taken_at exists
             clock_svg_path = maybe_generate_clock_svg(p, metadata.taken_at, collection_metadata)
@@ -650,6 +919,52 @@ if target_directory != ""
         end
     end
 
+    # Render summary maps (collection + per-country)
+    summary_outdir = resolve_summary_output_dir(collection_metadata)
+    if summary_outdir !== nothing
+        # Collection summary
+        caption = build_summary_caption(total_photos, valid_dates)
+        collection_out = joinpath(summary_outdir, "collection-summary.png")
+        maybe_render_summary_map(all_gps_points, caption, collection_out, collection_metadata)
+
+        # Per-country summaries
+        for country in sort(collect(keys(by_country)))
+            entries = by_country[country]
+            points = Tuple{Float64, Float64}[]
+            dates = DateTime[]
+            for (_, md) in entries
+                if md.latitude !== nothing && md.longitude !== nothing
+                    push!(points, (md.latitude, md.longitude))
+                end
+                if md.taken_at !== nothing && is_valid_collection_date(md.taken_at)
+                    push!(dates, md.taken_at)
+                end
+            end
+            isempty(points) && continue
+            cc = sanitize_filename_component(country)
+            outpath = joinpath(summary_outdir, "country-$(cc).png")
+            cap = build_summary_caption(length(entries), dates)
+            maybe_render_summary_map(points, cap, outpath, collection_metadata)
+        end
+        if !isempty(unknown)
+            points = Tuple{Float64, Float64}[]
+            dates = DateTime[]
+            for (_, md) in unknown
+                if md.latitude !== nothing && md.longitude !== nothing
+                    push!(points, (md.latitude, md.longitude))
+                end
+                if md.taken_at !== nothing && is_valid_collection_date(md.taken_at)
+                    push!(dates, md.taken_at)
+                end
+            end
+            if !isempty(points)
+                outpath = joinpath(summary_outdir, "country-UNKNOWN.png")
+                cap = build_summary_caption(length(unknown), dates)
+                maybe_render_summary_map(points, cap, outpath, collection_metadata)
+            end
+        end
+    end
+
     println("\n==== Country Map Summary ====")
     for country in sort(collect(keys(by_country)))
         entries = by_country[country]
@@ -687,6 +1002,3 @@ if target_directory != ""
         end
     end
 end
-
-# TODO: send each image task over to python script with corresponding parameters for rendering
-# TODO: send final collection metadata to python script for metadata rendering

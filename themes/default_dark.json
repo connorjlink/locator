@@ -1,0 +1,15 @@
+{
+  "oceancolor": "#000000",
+  "landcolor": "#0F0F0F",
+  "watercolor": "#29449b",
+  "bordercolor": "#A4A4A4",
+  "starcolor": "#C8A51C",
+  "insetcolor": "#880000",
+  "textcolor": "#FFFFFF",
+  "fontfamily": "serif",
+  "inset_size": 0.30,
+  "inset_margin": 0.02,
+  "title_fontsize": 6,
+  "inset_title_fontsize": 6,
+  "caption_fontsize": 5.5
+}
