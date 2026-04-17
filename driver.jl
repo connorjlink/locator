@@ -1,16 +1,17 @@
 # Requirements:
 # - exiftool (installed and in PATH externally)
-# - package ReverseGeocode
-# - package ArchGDAL
 
 
-using ReverseGeocode, StaticArrays
-gc = Geocoder()
-
+using ReverseGeocode
+using ArchGDAL
+using ArgParse
+using DataFrames
+using StaticArrays
 using Dates
 using SHA
 
-using ArchGDAL, DataFrames
+gc = Geocoder()
+
 dataset = ArchGDAL.open("ne_10m_admin_0_countries.shp")
 layer = ArchGDAL.getlayer(dataset, 0)
 
@@ -39,80 +40,48 @@ end
 
 const IMAGE_EXTS = Set([".png", ".jpg", ".jpeg", ".heic", ".heif"])
 
-struct CollectionMetadata
-    directory::Union{String, Nothing}
-    theme_file::Union{String, Nothing}
-    zoom_area_deg2::Float64
-    zoom_aspect_ratio::Float64  # width/height
-    interactive_caption_selection::Bool
-    photo_locations::Vector{Tuple{Float64, Float64}}
-    generate_clock_svgs::Bool
-    clock_output_dir::Union{String, Nothing}
-    clock_size_px::Int
-    clock_stroke_px::Float64
-    overwrite_clock_svgs::Bool
+mutable struct CollectionMetadata
+    directory::Union{String, Nothing} = nothing
+    theme_file::Union{String, Nothing} = nothing
+    zoom_area_deg2::Float64 = 0.0
+    zoom_aspect_ratio::Float64 = 1.0 # width/height
+    interactive_caption_selection::Bool = false
+    photo_locations::Vector{Tuple{Float64, Float64}} = Tuple{Float64, Float64}[]
+    generate_clock_svgs::Bool = false
+    clock_output_dir::Union{String, Nothing} = nothing
+    clock_size_px::Int = 0
+    clock_stroke_px::Float64 = 0.0
+    overwrite_clock_svgs::Bool = false
 
-    # Python map rendering
-    python_command::String
-    snapshot_script::Union{String, Nothing}
-    map_output_dir::Union{String, Nothing}
-    overwrite_maps::Bool
-    show_maps::Bool
+    # python map rendering
+    python_command::String = ""
+    snapshot_script::Union{String, Nothing} = nothing
+    map_output_dir::Union{String, Nothing} = nothing
+    overwrite_maps::Bool = false
+    show_maps::Bool = false
 
-    # Summary (collection / country) rendering
-    generate_summary_maps::Bool
-    summary_min_distance_m::Float64
-    summary_output_dir::Union{String, Nothing}
+    # summary (collection / country) rendering
+    generate_summary_maps::Bool = false
+    summary_min_distance_m::Float64 = 0.0
+    summary_output_dir::Union{String, Nothing} = nothing
 end
 
-function with_directory(collection::CollectionMetadata, directory::AbstractString)
-    return CollectionMetadata(
-        abspath(directory),
-        collection.theme_file,
-        collection.zoom_area_deg2,
-        collection.zoom_aspect_ratio,
-        collection.interactive_caption_selection,
-        collection.photo_locations,
-        collection.generate_clock_svgs,
-        collection.clock_output_dir,
-        collection.clock_size_px,
-        collection.clock_stroke_px,
-        collection.overwrite_clock_svgs,
-        collection.python_command,
-        collection.snapshot_script,
-        collection.map_output_dir,
-        collection.overwrite_maps,
-        collection.show_maps,
-        collection.generate_summary_maps,
-        collection.summary_min_distance_m,
-        collection.summary_output_dir,
-    )
+mutable struct PhotoMetadata
+    latitude::Union{Float64, Nothing}
+    longitude::Union{Float64, Nothing}
+    taken_at::Union{DateTime, Nothing}
+    date_string::Union{String, Nothing}
+    captions::Vector{String}
+    selected_caption::Union{String, Nothing}
+    city::Union{String, Nothing}
+    country::Union{String, Nothing}
+    location_string::Union{String, Nothing}
+    rectangle::Union{PhotoRectangle, Nothing}
+    zoom_rectangle::Union{PhotoRectangle, Nothing}
+    clock_svg_path::Union{String, Nothing}
 end
 
-function with_photo_locations(collection::CollectionMetadata, locations::Vector{Tuple{Float64, Float64}})
-    return CollectionMetadata(
-        collection.directory,
-        collection.theme_file,
-        collection.zoom_area_deg2,
-        collection.zoom_aspect_ratio,
-        collection.interactive_caption_selection,
-        locations,
-        collection.generate_clock_svgs,
-        collection.clock_output_dir,
-        collection.clock_size_px,
-        collection.clock_stroke_px,
-        collection.overwrite_clock_svgs,
-        collection.python_command,
-        collection.snapshot_script,
-        collection.map_output_dir,
-        collection.overwrite_maps,
-        collection.show_maps,
-        collection.generate_summary_maps,
-        collection.summary_min_distance_m,
-        collection.summary_output_dir,
-    )
-end
-
+# accept a single ratio like 1.77 or a width:height pair like 16:9
 function parse_aspect_ratio(value::AbstractString)
     s = strip(value)
     isempty(s) && return nothing
@@ -129,121 +98,13 @@ function parse_aspect_ratio(value::AbstractString)
     return r
 end
 
-function parse_arguments(args::Vector{String})
-    directory = nothing
-    theme_file = nothing
-    zoom_area_deg2 = 0.125
-    zoom_aspect_ratio = 16 / 9
-    interactive_caption_selection = true
 
-    # defaults
-    photo_locations = Tuple{Float64, Float64}[]
-    generate_clock_svgs = true
-    clock_output_dir = nothing
-    clock_size_px = 64
-    clock_stroke_px = 2.0
-    overwrite_clock_svgs = false
 
-    # python defaults
-    python_command = "python"
-    snapshot_script = joinpath(@__DIR__, "snapshot.py")
-    map_output_dir = nothing
-    overwrite_maps = false
-    show_maps = false
+function parse_arguments()
+    include("arguments.jl")
+    parsed_args = parse_args(s)
 
-    # summary defaults
-    generate_summary_maps = true
-    summary_min_distance_m = 100.0
-    summary_output_dir = nothing
-
-    i = 1
-    while i <= length(args)
-        a = args[i]
-        if a in ("--help", "-h")
-            println("Usage: julia driver.jl [--dir PATH] [--theme-file PATH] [--zoom-area DEG2] [--zoom-aspect 16:9|1.777] [--non-interactive]\n")
-            println("Defaults: --zoom-area 0.125, --zoom-aspect 16:9")
-            println("Python map rendering: --python python --snapshot-script snapshot.py [--map-dir DIR] [--overwrite-maps] [--show-maps]")
-            println("Summary maps: [--no-summary] [--summary-min-distance METERS] [--summary-dir DIR]")
-            exit(0)
-        elseif a in ("--dir", "-d")
-            i += 1
-            i <= length(args) || error("Missing value for $a")
-            directory = args[i]
-        elseif a in ("--theme-file", "-t")
-            i += 1
-            i <= length(args) || error("Missing value for $a")
-            theme_file = args[i]
-        elseif a == "--zoom-area"
-            i += 1
-            i <= length(args) || error("Missing value for --zoom-area")
-            v = tryparse(Float64, args[i])
-            (v === nothing || v <= 0) && error("Invalid --zoom-area: $(args[i])")
-            zoom_area_deg2 = v
-        elseif a == "--zoom-aspect"
-            i += 1
-            i <= length(args) || error("Missing value for --zoom-aspect")
-            r = parse_aspect_ratio(args[i])
-            r === nothing && error("Invalid --zoom-aspect: $(args[i])")
-            zoom_aspect_ratio = r
-        elseif a == "--non-interactive"
-            interactive_caption_selection = false
-        elseif a == "--no-clocks"
-            generate_clock_svgs = false
-        elseif a == "--clock-dir"
-            i += 1
-            i <= length(args) || error("Missing value for --clock-dir")
-            clock_output_dir = args[i]
-        elseif a == "--clock-size"
-            i += 1
-            i <= length(args) || error("Missing value for --clock-size")
-            v = tryparse(Int, args[i])
-            (v === nothing || v <= 0) && error("Invalid --clock-size: $(args[i])")
-            clock_size_px = v
-        elseif a == "--clock-stroke"
-            i += 1
-            i <= length(args) || error("Missing value for --clock-stroke")
-            v = tryparse(Float64, args[i])
-            (v === nothing || v <= 0) && error("Invalid --clock-stroke: $(args[i])")
-            clock_stroke_px = v
-        elseif a == "--overwrite-clocks"
-            overwrite_clock_svgs = true
-        elseif a == "--python"
-            i += 1
-            i <= length(args) || error("Missing value for --python")
-            python_command = args[i]
-        elseif a == "--snapshot-script"
-            i += 1
-            i <= length(args) || error("Missing value for --snapshot-script")
-            snapshot_script = args[i]
-        elseif a == "--map-dir"
-            i += 1
-            i <= length(args) || error("Missing value for --map-dir")
-            map_output_dir = args[i]
-        elseif a == "--overwrite-maps"
-            overwrite_maps = true
-        elseif a == "--show-maps"
-            show_maps = true
-        elseif a == "--no-summary"
-            generate_summary_maps = false
-        elseif a == "--summary-min-distance"
-            i += 1
-            i <= length(args) || error("Missing value for --summary-min-distance")
-            v = tryparse(Float64, args[i])
-            (v === nothing || v < 0) && error("Invalid --summary-min-distance: $(args[i])")
-            summary_min_distance_m = v
-        elseif a == "--summary-dir"
-            i += 1
-            i <= length(args) || error("Missing value for --summary-dir")
-            summary_output_dir = args[i]
-        elseif startswith(a, "-")
-            error("Unknown argument: $a")
-        else
-            # positional directory (first only)
-            directory === nothing && (directory = a)
-        end
-        i += 1
-    end
-
+    ## TODO fix this to bundle the parsed_args into a CollectionMetadata
     return CollectionMetadata(
         directory === nothing ? nothing : abspath(directory),
         theme_file === nothing ? nothing : abspath(theme_file),
@@ -380,20 +241,7 @@ function collection_world_rect(
     return world
 end
 
-struct PhotoMetadata
-    latitude::Union{Float64, Nothing}
-    longitude::Union{Float64, Nothing}
-    taken_at::Union{DateTime, Nothing}
-    date_string::Union{String, Nothing}
-    captions::Vector{String}
-    selected_caption::Union{String, Nothing}
-    city::Union{String, Nothing}
-    country::Union{String, Nothing}
-    location_string::Union{String, Nothing}
-    rectangle::Union{PhotoRectangle, Nothing}
-    zoom_rectangle::Union{PhotoRectangle, Nothing}
-    clock_svg_path::Union{String, Nothing}
-end
+
 
 function normalize_captions(captions::Vector{String})
     cleaned = String[]
@@ -573,9 +421,10 @@ function resolve_summary_output_dir(collection::CollectionMetadata)
     return outdir
 end
 
-function is_valid_collection_date(dt::DateTime)
-    year(dt) < 2000 && return false
-    dt > Dates.now() && return false
+# usually unset by the device will default to 0 or a far past date in the exif from the gallery tested
+function is_valid_collection_date(date::DateTime)
+    year(date) < 2000 && return false
+    date > Dates.now() && return false
     return true
 end
 
@@ -609,8 +458,6 @@ function maybe_render_summary_map(
     world_rect::Union{PhotoRectangle, Nothing} = nothing,
 )
     isempty(points) && return nothing
-    collection.snapshot_script === nothing && return nothing
-    isfile(collection.snapshot_script) || error("snapshot script not found: $(collection.snapshot_script)")
 
     if isfile(outpath) && !collection.overwrite_maps
         return outpath
@@ -621,7 +468,7 @@ function maybe_render_summary_map(
 
     cmd_parts = Any[
         collection.python_command,
-        collection.snapshot_script,
+        "snapshot.py",
         "--summary-points", points_csv,
         "--min-distance-m", string(collection.summary_min_distance_m),
         "--out", outpath,
@@ -884,7 +731,7 @@ catch e
 end
 
 if target_directory != ""
-    collection_metadata = with_directory(collection_metadata, target_directory)
+    collection_metadata.directory = target_directory
 
     seen_locations = Set{Tuple{Float64, Float64}}()
     all_gps_points = Tuple{Float64, Float64}[]
@@ -977,8 +824,8 @@ if target_directory != ""
         end
     end
 
-    # Save directory-wide, deduplicated (lat, lon) list into the collection metadata.
-    collection_metadata = with_photo_locations(collection_metadata, sort!(collect(seen_locations)))
+    # save directory-wide, deduplicated (lat, lon) list into the collection metadata
+    collection_metadata.photo_locations = sort!(collect(seen_locations))
     println("\n==== Collection GPS Locations ====")
     println("Unique photo GPS points: $(length(collection_metadata.photo_locations))")
     for (lat, lon) in collection_metadata.photo_locations

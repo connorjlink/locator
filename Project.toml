@@ -1,0 +1,4 @@
+[deps]
+ArchGDAL = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
+ReverseGeocode = "96b87e3f-b46e-456c-8178-0e438baab6fa"
