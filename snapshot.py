@@ -38,7 +38,7 @@ DEFAULT_ZOOM_REGION = Region(
     52.614007667018164,
     52.71198728589052,
 )
-DEFAULT_STAR = (52.6698042403715, -8.577276842533156)  # (lat, lon)
+DEFAULT_STAR = (52.6698042403715, -8.577276842533156)  # (latitute, longitude)
 
 
 DEFAULT_THEME: dict[str, Any] = {
@@ -76,22 +76,22 @@ def cluster_points(
     if not points:
         return []
     if min_distance_m <= 0:
-        return [(lat, lon, 1) for (lat, lon) in points]
+        return [(latitute, longitude, 1) for (latitute, longitude) in points]
 
     clusters: list[tuple[float, float, int]] = []
-    for lat, lon in points:
+    for latitute, longitude in points:
         assigned = False
         for idx, (clat, clon, count) in enumerate(clusters):
-            if haversine_m(lat, lon, clat, clon) <= min_distance_m:
+            if haversine_m(latitute, longitude, clat, clon) <= min_distance_m:
                 # update centroid as running mean
                 new_count = count + 1
-                new_lat = (clat * count + lat) / new_count
-                new_lon = (clon * count + lon) / new_count
+                new_lat = (clat * count + latitute) / new_count
+                new_lon = (clon * count + longitude) / new_count
                 clusters[idx] = (new_lat, new_lon, new_count)
                 assigned = True
                 break
         if not assigned:
-            clusters.append((lat, lon, 1))
+            clusters.append((latitute, longitude, 1))
     return clusters
 
 
@@ -106,7 +106,7 @@ def _read_points_csv(path: str) -> list[tuple[float, float]]:
             continue
         parts = [x.strip() for x in line.split(",")]
         if len(parts) != 2:
-            raise ValueError(f"Invalid points line (expected 'lat,lon'): {raw!r}")
+            raise ValueError(f"Invalid points line (expected 'latitute,longitude'): {raw!r}")
         points.append((float(parts[0]), float(parts[1])))
     return points
 
@@ -115,10 +115,10 @@ def _auto_region_from_points(points: list[tuple[float, float]]) -> Region:
     if not points:
         return DEFAULT_WORLD_REGION.normalized()
 
-    lats = [p[0] for p in points]
-    lons = [p[1] for p in points]
-    lat0, lat1 = min(lats), max(lats)
-    lon0, lon1 = min(lons), max(lons)
+    latitutes = [p[0] for p in points]
+    longitudes = [p[1] for p in points]
+    lat0, lat1 = min(latitutes), max(latitutes)
+    lon0, lon1 = min(longitudes), max(longitudes)
 
     # if points span most of the globe, fall back to a global-ish region.
     if (lon1 - lon0) > 180:
@@ -159,10 +159,10 @@ def render_summary_map(
     ax.set_aspect("equal", adjustable="box")
 
     clusters = cluster_points(points_lat_lon, min_distance_m=min_distance_m)
-    for lat, lon, count in clusters:
+    for latitute, longitude, count in clusters:
         # slightly scale star size for clusters, but keep it subtle.
         ms = 7.0 + min(6.0, 1.5 * math.log10(max(1, count)))
-        ax.plot(lon, lat, marker="*", color=theme["starcolor"], markersize=ms, transform=proj, zorder=6)
+        ax.plot(longitude, latitute, marker="*", color=theme["starcolor"], markersize=ms, transform=proj, zorder=6)
 
     if caption:
         ax.text(
@@ -208,7 +208,7 @@ def parse_region(values: list[str]) -> Region:
 
 
 def parse_lat_lon(values: list[str]) -> tuple[float, float]:
-    latitude, longitude = _float_list(values, 2, "lat/lon")
+    latitude, longitude = _float_list(values, 2, "latitute/longitude")
     return (latitude, longitude)
 
 
@@ -419,8 +419,8 @@ def render_map(
     ]
     corners_inset = [(0, 0), (1, 0), (0, 1), (1, 1)]
 
-    for (lon, lat), (xB, yB) in zip(corners_main, corners_inset):
-        x_disp, y_disp = ax_main.projection.transform_point(lon, lat, ccrs.PlateCarree())
+    for (longitude, latitute), (xB, yB) in zip(corners_main, corners_inset):
+        x_disp, y_disp = ax_main.projection.transform_point(longitude, latitute, ccrs.PlateCarree())
         conn = ConnectionPatch(
             xyA=(x_disp, y_disp),
             coordsA=ax_main.transData,
@@ -445,7 +445,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--summary-points",
         default=None,
-        help="CSV file of points (lat,lon per line). If provided, renders a summary map (no inset).",
+        help="CSV file of points (latitute,longitude per line). If provided, renders a summary map (no inset).",
     )
     p.add_argument(
         "--min-distance-m",
@@ -470,7 +470,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--star",
         nargs=2,
-        metavar=("LAT", "LON"),
+        metavar=("latitute", "longitude"),
         default=list(DEFAULT_STAR),
         help="Star (photo) location as latitude longitude.",
     )

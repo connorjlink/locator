@@ -81,6 +81,14 @@ mutable struct PhotoMetadata
     clock_svg_path::Union{String, Nothing}
 end
 
+mutable struct PhotoRectangle
+    minimum_latitude::Float64
+    maximum_latitude::Float64
+    minimum_longitude::Float64
+    maximum_longitude::Float64
+end
+
+
 # accept a single ratio like 1.77 or a width:height pair like 16:9
 function parse_aspect_ratio(value::AbstractString)
     s = strip(value)
@@ -134,27 +142,13 @@ function canonical_latlon(latitude::Float64, longitude::Float64; digits::Int = 6
     return (round(latitude; digits = digits), round(longitude; digits = digits))
 end
 
-function get_directory(collection::CollectionMetadata)
-    if collection.directory !== nothing
-        directory = collection.directory
-        if isdir(directory)
-            return abspath(directory)
-        else
-            @warn "Argument is not a directory: $directory"
-        end
-    end
-    print("Enter photograph directory (or Enter to cancel): ")
-    directory = strip(readline())
-    isempty(directory) && error("Directory not specified.")
-    if !isdir(directory)
-        error("Invalid directory: $directory")
-    end
-    return abspath(directory)
-end
 
-function collect_image_files(dir::AbstractString)
+
+# find the acceptable image files within the given directory tree
+function collect_image_files(directory::AbstractString)
     result = String[]
-    for (root, _, names) in walkdir(dir)
+
+    for (root, _, names) in walkdir(directory)
         for name in names
             extension = lowercase(splitext(name)[2])
             if extension in IMAGE_EXTS
@@ -162,22 +156,25 @@ function collect_image_files(dir::AbstractString)
             end
         end
     end
+
     return result
 end
 
-struct PhotoRectangle
-    minimum_latitude::Float64
-    maximum_latitude::Float64
-    minimum_longitude::Float64
-    maximum_longitude::Float64
+
+function clamp_latitude(x::Float64)
+    return max(-90.0, min(90.0, x))
 end
 
-function clamp_rect(r::PhotoRectangle)
+function clamp_longitude(x::Float64)
+    return max(-180.0, min(180.0, x))
+end
+
+function clamp_rect(rectangle::PhotoRectangle)
     return PhotoRectangle(
-        clamp_latitude(r.minimum_latitude),
-        clamp_latitude(r.maximum_latitude),
-        clamp_longitude(r.minimum_longitude),
-        clamp_longitude(r.maximum_longitude),
+        clamp_latitude(rectangle.minimum_latitude),
+        clamp_latitude(rectangle.maximum_latitude),
+        clamp_longitude(rectangle.minimum_longitude),
+        clamp_longitude(rectangle.maximum_longitude),
     )
 end
 
@@ -192,10 +189,22 @@ end
 
 function rect_from_points(points::Vector{Tuple{Float64, Float64}})
     isempty(points) && return nothing
-    lats = [p[1] for p in points]
-    lons = [p[2] for p in points]
-    return clamp_rect(PhotoRectangle(minimum(lats), maximum(lats), minimum(lons), maximum(lons)))
+    latitutes = [p[1] for p in points]
+    longitudes = [p[2] for p in points]
+    return clamp_rect(PhotoRectangle(minimum(latitutes), maximum(latitutes), minimum(longitudes), maximum(longitudes)))
 end
+
+# example: md.latitude -> "NULL" or "37.7749"
+function value_or_null(v, functor = string)
+    return v === nothing ? "NULL" : functor(v)
+end
+
+# example: "Friday, July 24, 2020"
+function format_taken_date(datetime::DateTime)
+    return "$(dayname(datetime)), $(monthname(datetime)) $(day(datetime)), $(year(datetime))"
+end
+
+
 
 function collection_world_rect(
     by_country::Dict{String, Vector{Tuple{String, PhotoMetadata}}},
@@ -242,19 +251,21 @@ function collection_world_rect(
 end
 
 
-
+# sanitize EXIF caption strings
 function normalize_captions(captions::Vector{String})
     cleaned = String[]
     seen = Set{String}()
+
     for c in captions
-        s = strip(c)
-        isempty(s) && continue
-        key = lowercase(s)
+        stripped = strip(c)
+        isempty(stripped) && continue
+        key = lowercase(stripped)
         if !(key in seen)
-            push!(cleaned, s)
+            push!(cleaned, stripped)
             push!(seen, key)
         end
     end
+
     return cleaned
 end
 
@@ -280,7 +291,7 @@ function choose_caption_for_location(path::AbstractString, captions::Vector{Stri
     choice = strip(readline())
     isempty(choice) && return captions[1]
 
-    # Accept A/B/C... or 1/2/3...
+    # accept A/B/C... or 1/2/3...
     if length(choice) == 1 && isletter(choice[1])
         idx = Int(uppercase(choice[1]) - 'A') + 1
         return (1 <= idx <= length(captions)) ? captions[idx] : captions[1]
@@ -301,27 +312,18 @@ function parse_exif_datetime(value::AbstractString)
     v_no_tz = replace(v, r"[+-]\d\d:\d\d$" => "")
 
     for fmt in (dateformat"yyyy:mm:dd HH:MM:SS", dateformat"yyyy-mm-dd HH:MM:SS")
-        dt = try
+        datetime = try
             DateTime(v_no_tz, fmt)
         catch
             nothing
         end
-        dt !== nothing && return dt
+        datetime !== nothing && return datetime
     end
     return nothing
 end
 
-function format_taken_date(dt::DateTime)
-    return "$(dayname(dt)), $(monthname(dt)) $(day(dt)), $(year(dt))"
-end
 
-function clamp_latitude(x::Float64)
-    return max(-90.0, min(90.0, x))
-end
 
-function clamp_longitude(x::Float64)
-    return max(-180.0, min(180.0, x))
-end
 
 function compute_zoom_rectangle(latitude::Float64, longitude::Float64, area_deg2::Float64, aspect_ratio::Float64)
     # area_deg2 = width_deg * height_deg, aspect_ratio = width/height
@@ -351,11 +353,12 @@ function maybe_getprop(obj, name::Symbol)
     end
 end
 
+# reverse geocode the given latitude and longitude into a city and country, if possible
 function get_city_country_from_coordinates(latitude::Float64, longitude::Float64)
     result = get_reverse_geocode(latitude, longitude)
     result === nothing && return (nothing, nothing)
 
-    # ReverseGeocode result fields vary by dataset; try common ones.
+    # reverseGeocode result fields seem to vary by dataset
     city = something(
         maybe_getprop(result, :city),
         maybe_getprop(result, :name),
@@ -443,8 +446,8 @@ end
 
 function write_points_csv(path::AbstractString, points::Vector{Tuple{Float64, Float64}})
     open(path, "w") do io
-        for (lat, lon) in points
-            println(io, "$(lat),$(lon)")
+        for (latitute, longitude) in points
+            println(io, "$(latitute),$(longitude)")
         end
     end
     return path
@@ -502,29 +505,30 @@ function maybe_render_summary_map(
     return outpath
 end
 
-function clock_svg_string(dt::DateTime; size_px::Int = 64, stroke_px::Float64 = 2.0)
+function clock_svg_string(datetime::DateTime; size_px::Int = 64, stroke_px::Float64 = 2.0)
     size = float(size_px)
     cx = size / 2
     cy = size / 2
-    r = max(0.0, (size / 2) - stroke_px)  # ring radius
+    ring_radius = max(0.0, (size / 2) - stroke_px)
 
     # time fractions
-    h = mod(hour(dt), 12)
-    m = minute(dt)
-    s = second(dt)
+    h = mod(hour(datetime), 12)
+    m = minute(datetime)
+    s = second(datetime)
 
     hour_frac = (h + m / 60 + s / 3600) / 12
     min_frac = (m + s / 60) / 60
 
     function endpoint(frac::Float64, len::Float64)
-        θ = 2π * frac - π/2  # 0 at 12 o'clock; increases clockwise in SVG coords
+        # 0 at 12 o'clock; increases clockwise in SVG coords
+        θ = 2π * frac - π/2
         x = cx + len * cos(θ)
         y = cy + len * sin(θ)
         return (x, y)
     end
 
-    hour_len = r * 0.55
-    min_len  = r * 0.82
+    hour_len = ring_radius * 0.55
+    min_len  = ring_radius * 0.82
 
     hx, hy = endpoint(hour_frac, hour_len)
     mx, my = endpoint(min_frac, min_len)
@@ -532,7 +536,7 @@ function clock_svg_string(dt::DateTime; size_px::Int = 64, stroke_px::Float64 = 
     # transparent fill, round caps, slightly thicker hour hand
     return """
 <svg xmlns="http://www.w3.org/2000/svg" width="$(size_px)" height="$(size_px)" viewBox="0 0 $(size_px) $(size_px)">
-  <circle cx="$(cx)" cy="$(cy)" r="$(r)" fill="none" stroke="black" stroke-width="$(stroke_px)"/>
+  <circle cx="$(cx)" cy="$(cy)" r="$(ring_radius)" fill="none" stroke="black" stroke-width="$(stroke_px)"/>
   <line x1="$(cx)" y1="$(cy)" x2="$(hx)" y2="$(hy)" stroke="black" stroke-width="$(max(stroke_px, 2.0))" stroke-linecap="round"/>
   <line x1="$(cx)" y1="$(cy)" x2="$(mx)" y2="$(my)" stroke="black" stroke-width="$(max(1.0, stroke_px))" stroke-linecap="round"/>
   <circle cx="$(cx)" cy="$(cy)" r="$(max(1.0, stroke_px))" fill="black"/>
@@ -540,13 +544,13 @@ function clock_svg_string(dt::DateTime; size_px::Int = 64, stroke_px::Float64 = 
 """
 end
 
-function maybe_generate_clock_svg(image_path::AbstractString, dt::Union{DateTime, Nothing}, collection::CollectionMetadata)
-    dt === nothing && return nothing
+function maybe_generate_clock_svg(image_path::AbstractString, datetime::Union{DateTime, Nothing}, collection::CollectionMetadata)
+    datetime === nothing && return nothing
     outdir = resolve_clock_output_dir(collection)
     outdir === nothing && return nothing
 
     base = sanitize_filename_component(splitext(basename(image_path))[1])
-    hhmm = Dates.format(dt, "HHMM")
+    hhmm = Dates.format(datetime, "HHMM")
     digest = bytes2hex(sha1(image_path))[1:10]
     outpath = joinpath(outdir, "$(base)-$(hhmm)-$(digest).svg")
 
@@ -554,7 +558,7 @@ function maybe_generate_clock_svg(image_path::AbstractString, dt::Union{DateTime
         return outpath
     end
 
-    svg = clock_svg_string(dt; size_px = collection.clock_size_px, stroke_px = collection.clock_stroke_px)
+    svg = clock_svg_string(datetime; size_px = collection.clock_size_px, stroke_px = collection.clock_stroke_px)
     open(outpath, "w") do io
         write(io, svg)
     end
@@ -570,7 +574,7 @@ function build_caption(md::PhotoMetadata)
 end
 
 function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collection::CollectionMetadata)
-    # Needs GPS and zoom rectangle to be meaningful.
+    # locator is meaningless without GPS and zoom rectangle
     (md.latitude === nothing || md.longitude === nothing || md.zoom_rectangle === nothing) && return nothing
     collection.snapshot_script === nothing && return nothing
     isfile(collection.snapshot_script) || error("snapshot script not found: $(collection.snapshot_script)")
@@ -677,8 +681,8 @@ function parse_photo_metadata(path::AbstractString, collection::CollectionMetada
             v !== nothing && (longitude = v)
         elseif key in ("datetimeoriginal", "create date", "modify date")
             if taken_at === nothing
-                dt = parse_exif_datetime(value)
-                dt !== nothing && (taken_at = dt)
+                datetime = parse_exif_datetime(value)
+                datetime !== nothing && (taken_at = datetime)
             end
         elseif key in ("imagedescription", "caption-abstract", "usercomment", "xpcomment", "keywords")
             push!(captions, value)
@@ -720,17 +724,24 @@ function build_location_string(selected_caption::Union{String, Nothing}, city::U
     return join(parts, ", ")
 end
 
-# determine target directory and enumerate images therein or within child directories thereof
-collection_metadata = parse_arguments(ARGS)
+# prompt for directory if not provided
+function get_directory(collection::CollectionMetadata)
+    if collection.directory !== nothing
+        directory = collection.directory
+        if isdir(directory)
+            return abspath(directory)
+        else
+            @warn "Argument is not a directory: $directory"
+        end
+    end
 
-target_directory = try
-    get_directory(collection_metadata)
-catch e
-    @error e isa Exception ? e.msg : string(e)
-    ""
+    throw(ArgumentError("Directory must be specified as an argument"))
 end
 
-if target_directory != ""
+function main()
+    collection_metadata = parse_arguments()
+    # sanitize and validate the provided directory
+    target_directory = get_directory(collection_metadata)
     collection_metadata.directory = target_directory
 
     seen_locations = Set{Tuple{Float64, Float64}}()
@@ -771,65 +782,45 @@ if target_directory != ""
             end
 
             location_string = build_location_string(metadata.selected_caption, city, country)
-
             clock_svg_path = maybe_generate_clock_svg(p, metadata.taken_at, collection_metadata)
 
-            metadata = PhotoMetadata(
-                metadata.latitude,
-                metadata.longitude,
-                metadata.taken_at,
-                metadata.date_string,
-                metadata.captions,
-                metadata.selected_caption,
-                city,
-                country,
-                location_string,
-                rectangle,
-                zoom_rectangle,
-                clock_svg_path,
-            )
+            metadata.city = city
+            metadata.country = country
+            metadata.location_string = location_string
+            metadata.rectangle = rectangle
+            metadata.zoom_rectangle = zoom_rectangle
+            metadata.clock_svg_path = clock_svg_path
 
             map_path = maybe_render_map(p, metadata, collection_metadata)
             map_path !== nothing && println("  -> map=$map_path")
+
         elseif metadata !== nothing
             # still generate clock even if GPS missing, if taken_at exists
             clock_svg_path = maybe_generate_clock_svg(p, metadata.taken_at, collection_metadata)
-            metadata = PhotoMetadata(
-                metadata.latitude,
-                metadata.longitude,
-                metadata.taken_at,
-                metadata.date_string,
-                metadata.captions,
-                metadata.selected_caption,
-                metadata.city,
-                metadata.country,
-                metadata.location_string,
-                metadata.rectangle,
-                metadata.zoom_rectangle,
-                clock_svg_path,
-            )
+            metadata.clock_svg_path = clock_svg_path
+            
         end
 
         photo_index[p] = metadata
         if metadata === nothing
             @warn "Metadata missing or unparsable for $p"
         else
-            latstr = metadata.latitude === nothing ? "NULL" : string(metadata.latitude)
-            lonstr = metadata.longitude === nothing ? "NULL" : string(metadata.longitude)
-            datestr = metadata.date_string === nothing ? "NULL" : metadata.date_string
-            locstr = metadata.location_string === nothing ? "NULL" : metadata.location_string
-            ctry = metadata.country === nothing ? "NULL" : metadata.country
-            clk = metadata.clock_svg_path === nothing ? "NULL" : metadata.clock_svg_path
-            println("  -> latitude=$latstr longitude=$lonstr country=$(ctry) date=$(datestr) location=$(locstr) clock=$(clk)")
+            latitude_string = metadata.latitude === nothing ? "NULL" : string(metadata.latitude)
+            longitude_string = metadata.longitude === nothing ? "NULL" : string(metadata.longitude)
+            date_string = metadata.date_string === nothing ? "NULL" : metadata.date_string
+            location_string = metadata.location_string === nothing ? "NULL" : metadata.location_string
+            country = metadata.country === nothing ? "NULL" : metadata.country
+            clock = metadata.clock_svg_path === nothing ? "NULL" : metadata.clock_svg_path
+            println("  -> latitude=$latitude_string longitude=$longitude_string country=$(country) date=$(date_string) location=$(location_string) clock=$(clock)")
         end
     end
 
-    # save directory-wide, deduplicated (lat, lon) list into the collection metadata
+    # save directory-wide, deduplicated (latitute, longitude) list into the collection metadata
     collection_metadata.photo_locations = sort!(collect(seen_locations))
     println("\n==== Collection GPS Locations ====")
     println("Unique photo GPS points: $(length(collection_metadata.photo_locations))")
-    for (lat, lon) in collection_metadata.photo_locations
-        println("  - lat=$(lat) lon=$(lon)")
+    for (latitute, longitude) in collection_metadata.photo_locations
+        println("  - latitute=$(latitute) longitude=$(longitude)")
     end
 
     # final structured output grouped by country
@@ -920,21 +911,23 @@ if target_directory != ""
         end
 
         for (path, md) in sort(entries; by = x -> x[1])
-            zoom_str = md.zoom_rectangle === nothing ? "NULL" : rect_string(md.zoom_rectangle)
-            datestr = md.date_string === nothing ? "NULL" : md.date_string
-            locstr = md.location_string === nothing ? "NULL" : md.location_string
-            println("  - $(basename(path)) | date=$datestr | location=$locstr")
-            println("    zoom bounds: $zoom_str")
+            zoom_string = md.zoom_rectangle === nothing ? "NULL" : rect_string(md.zoom_rectangle)
+            date_string = md.date_string === nothing ? "NULL" : md.date_string
+            location_string = md.location_string === nothing ? "NULL" : md.location_string
+
+            println("  - $(basename(path)) | date=$date_string | location=$location_string")
+            println("    zoom bounds: $zoom_string")
         end
     end
     if !isempty(unknown)
         println("\nCountry: UNKNOWN (photos: $(length(unknown)))")
         for (path, md) in sort(unknown; by = x -> x[1])
-            zoom_str = md.zoom_rectangle === nothing ? "NULL" : rect_string(md.zoom_rectangle)
-            datestr = md.date_string === nothing ? "NULL" : md.date_string
-            locstr = md.location_string === nothing ? "NULL" : md.location_string
-            println("  - $(basename(path)) | date=$datestr | location=$locstr")
-            println("    zoom bounds: $zoom_str")
+            zoom_string = md.zoom_rectangle === nothing ? "NULL" : rect_string(md.zoom_rectangle)
+            date_string = md.date_string === nothing ? "NULL" : md.date_string
+            location_string = md.location_string === nothing ? "NULL" : md.location_string
+            println("  - $(basename(path)) | date=$date_string | location=$location_string")
+            println("    zoom bounds: $zoom_string")
         end
     end
+
 end
