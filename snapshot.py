@@ -207,8 +207,8 @@ def parse_region(values: list[str]) -> Region:
     return Region(minimum_longitude, maximum_longitude, minimum_latitude, maximum_latitude).normalized()
 
 
-def parse_lat_lon(values: list[str]) -> tuple[float, float]:
-    latitude, longitude = _float_list(values, 2, "latitute/longitude")
+def parse_coordinates(values: list[str]) -> tuple[float, float]:
+    latitude, longitude = _float_list(values, 2, "latitude/longitude")
     return (latitude, longitude)
 
 
@@ -525,7 +525,7 @@ def main(argv: list[str] | None = None) -> int:
 
     world_region = parse_region([str(x) for x in args.world_region])
     zoom_region = parse_region([str(x) for x in args.zoom_region])
-    star = parse_lat_lon([str(x) for x in args.star])
+    star = parse_coordinates([str(x) for x in args.star])
 
     render_map(
         world_region=world_region,

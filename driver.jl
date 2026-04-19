@@ -37,7 +37,7 @@ for feature in layer
     ))
 end
 
-const IMAGE_EXTS = Set([".png", ".jpg", ".jpeg", ".heic", ".heif"])
+const IMAGE_EXTS = Set([".png", ".jpg", ".jpeg", ".heic", ".heif", ".tiff", ".tif"])
 
 mutable struct CollectionMetadata
     directory::Union{String, Nothing}
@@ -479,7 +479,6 @@ function resolve_clock_output_dir(collection::CollectionMetadata)
     base = collection.directory
     outdir = collection.clock_output_dir === nothing ? joinpath(base, "_clock_svgs") : collection.clock_output_dir
 
-    is_within_dir(outdir, base) || error("Cannot write clocks outside photo directory. clock-dir=$outdir base=$base")
     mkpath(outdir)
     return outdir
 end
@@ -489,7 +488,6 @@ function resolve_map_output_dir(collection::CollectionMetadata)
 
     base = collection.directory
     outdir = collection.map_output_dir === nothing ? joinpath(base, "_locator_maps") : collection.map_output_dir
-    is_within_dir(outdir, base) || error("Cannot write maps outside photo directory. map-dir=$outdir base=$base")
     mkpath(outdir)
     return outdir
 end
@@ -500,7 +498,6 @@ function resolve_summary_output_dir(collection::CollectionMetadata)
 
     base = collection.directory
     outdir = collection.summary_output_dir === nothing ? joinpath(base, "_locator_summaries") : collection.summary_output_dir
-    is_within_dir(outdir, base) || error("Cannot write summaries outside photo directory. summary-dir=$outdir base=$base")
     mkpath(outdir)
     return outdir
 end
@@ -526,7 +523,7 @@ function build_summary_caption(photo_count::Int, dates::Vector{DateTime})
 end
 
 function write_points_csv(path::AbstractString, points::Vector{Tuple{Float64, Float64}})
-    open(path, "width") do io
+    open(path, "w") do io
         for (latitute, longitude) in points
             println(io, "$(latitute),$(longitude)")
         end
@@ -640,7 +637,7 @@ function maybe_generate_clock_svg(image_path::AbstractString, datetime::Union{Da
     end
 
     svg = clock_svg_string(datetime; size_px = collection.clock_size_px, stroke_px = collection.clock_stroke_px)
-    open(outpath, "width") do io
+    open(outpath, "w") do io
         write(io, svg)
     end
     return outpath
@@ -736,12 +733,15 @@ end
 
 function parse_photo_metadata(path::AbstractString, collection::CollectionMetadata)
     command = `exiftool -n -GPSLatitude -GPSLongitude -DateTimeOriginal -CreateDate -ModifyDate -ImageDescription -Caption-Abstract -UserComment -XPComment -Keywords $path`
+    out = nothing
     try
         out = read(command, String)
     catch e
         @warn "Could not run exiftool for $path: $(e)"
         return nothing
     end
+
+    out === nothing && return nothing
 
     latitude = nothing
     longitude = nothing
