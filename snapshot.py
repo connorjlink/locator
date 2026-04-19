@@ -23,9 +23,9 @@ class Region:
     maximum_latitude: float
 
     def normalized(self) -> "Region":
-        lon0, lon1 = sorted((self.minimum_longitude, self.maximum_longitude))
-        lat0, lat1 = sorted((self.minimum_latitude, self.maximum_latitude))
-        return Region(lon0, lon1, lat0, lat1)
+        longitude0, longitude1 = sorted((self.minimum_longitude, self.maximum_longitude))
+        latitude0, latitude1 = sorted((self.minimum_latitude, self.maximum_latitude))
+        return Region(longitude0, longitude1, latitude0, latitude1)
 
     def as_extent(self) -> list[float]:
         return [self.minimum_longitude, self.maximum_longitude, self.minimum_latitude, self.maximum_latitude]
@@ -58,12 +58,12 @@ DEFAULT_THEME: dict[str, Any] = {
 }
 
 
-def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+def haversine_m(latitude1: float, longitude1: float, latitude2: float, longitude2: float) -> float:
     r = 6371000.0
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
+    phi1 = math.radians(latitude1)
+    phi2 = math.radians(latitude2)
     dphi = phi2 - phi1
-    dlambda = math.radians(lon2 - lon1)
+    dlambda = math.radians(longitude2 - longitude1)
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     return 2 * r * math.asin(min(1.0, math.sqrt(a)))
 
@@ -117,18 +117,18 @@ def _auto_region_from_points(points: list[tuple[float, float]]) -> Region:
 
     latitutes = [p[0] for p in points]
     longitudes = [p[1] for p in points]
-    lat0, lat1 = min(latitutes), max(latitutes)
-    lon0, lon1 = min(longitudes), max(longitudes)
+    latitude0, latitude1 = min(latitutes), max(latitutes)
+    longitude0, longitude1 = min(longitudes), max(longitudes)
 
     # if points span most of the globe, fall back to a global-ish region.
-    if (lon1 - lon0) > 180:
-        return Region(-180.0, 180.0, max(-80.0, lat0 - 5.0), min(80.0, lat1 + 5.0)).normalized()
+    if (longitude1 - longitude0) > 180:
+        return Region(-180.0, 180.0, max(-80.0, latitude0 - 5.0), min(80.0, latitude1 + 5.0)).normalized()
 
-    lat_span = max(0.01, lat1 - lat0)
-    lon_span = max(0.01, lon1 - lon0)
-    lat_pad = max(0.5, lat_span * 0.35)
-    lon_pad = max(0.5, lon_span * 0.35)
-    return Region(lon0 - lon_pad, lon1 + lon_pad, lat0 - lat_pad, lat1 + lat_pad).normalized()
+    lat_span = max(0.01, latitude1 - latitude0)
+    lon_span = max(0.01, longitude1 - longitude0)
+    latitude_padded = max(0.5, lat_span * 0.35)
+    longitude_padded = max(0.5, lon_span * 0.35)
+    return Region(longitude0 - longitude_padded, longitude1 + longitude_padded, latitude0 - latitude_padded, latitude1 + latitude_padded).normalized()
 
 
 def render_summary_map(
@@ -500,14 +500,10 @@ def main(argv: list[str] | None = None) -> int:
 
     theme = load_theme(args.theme_file)
 
-    # Summary mode: a single zoomed-out map containing all points.
+    # summary comprises a single zoomed-out map containing all points
     if args.summary_points:
         points = _read_points_csv(args.summary_points)
 
-        # Only treat --world-region as an explicit override if the user supplied
-        # something different from the default. This preserves the convenient
-        # auto-fit behavior unless an upstream caller (e.g. driver.jl) chooses
-        # to provide explicit bounds.
         default_world = DEFAULT_WORLD_REGION.as_extent()
         override_world = args.world_region
         summary_world_region: Region | None = None

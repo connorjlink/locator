@@ -39,3 +39,7 @@ python snapshot.py \
 
 ### Notes
 See themes/default_dark.json for information on configuring a custom map color scheme.
+
+### Credits
+Natural Earth Vector for shapefile data.
+https://github.com/nvkelso/natural-earth-vector/tree/master?tab=License-1-ov-file

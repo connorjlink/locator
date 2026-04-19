@@ -1,9 +1,8 @@
 # Requirements:
 # - exiftool (installed and in PATH externally)
 
-
-using ReverseGeocode
 using ArchGDAL
+using ReverseGeocode
 using ArgParse
 using DataFrames
 using StaticArrays
@@ -12,7 +11,7 @@ using SHA
 
 gc = Geocoder()
 
-dataset = ArchGDAL.open("ne_10m_admin_0_countries.shp")
+dataset = ArchGDAL.read("ne_10m_admin_0_countries.shp")
 layer = ArchGDAL.getlayer(dataset, 0)
 
 results = DataFrame(
@@ -41,29 +40,36 @@ end
 const IMAGE_EXTS = Set([".png", ".jpg", ".jpeg", ".heic", ".heif"])
 
 mutable struct CollectionMetadata
-    directory::Union{String, Nothing} = nothing
-    theme_file::Union{String, Nothing} = nothing
-    zoom_area_deg2::Float64 = 0.0
-    zoom_aspect_ratio::Float64 = 1.0 # width/height
-    interactive_caption_selection::Bool = false
-    photo_locations::Vector{Tuple{Float64, Float64}} = Tuple{Float64, Float64}[]
-    generate_clock_svgs::Bool = false
-    clock_output_dir::Union{String, Nothing} = nothing
-    clock_size_px::Int = 0
-    clock_stroke_px::Float64 = 0.0
-    overwrite_clock_svgs::Bool = false
+    directory::Union{String, Nothing}
+    theme_file::Union{String, Nothing}
+    zoom_area_deg2::Float64
+    zoom_aspect_ratio::Float64 # width/height
+    interactive_caption_selection::Bool
+    photo_locations::Vector{Tuple{Float64, Float64}}
+    generate_clock_svgs::Bool
+    clock_output_dir::Union{String, Nothing}
+    clock_size_px::Int
+    clock_stroke_px::Float64
+    overwrite_clock_svgs::Bool
 
     # python map rendering
-    python_command::String = ""
-    snapshot_script::Union{String, Nothing} = nothing
-    map_output_dir::Union{String, Nothing} = nothing
-    overwrite_maps::Bool = false
-    show_maps::Bool = false
+    python_command::String
+    snapshot_script::Union{String, Nothing}
+    map_output_dir::Union{String, Nothing}
+    overwrite_maps::Bool
+    show_maps::Bool
 
     # summary (collection / country) rendering
-    generate_summary_maps::Bool = false
-    summary_min_distance_m::Float64 = 0.0
-    summary_output_dir::Union{String, Nothing} = nothing
+    generate_summary_maps::Bool
+    summary_min_distance_m::Float64
+    summary_output_dir::Union{String, Nothing}
+end
+
+mutable struct PhotoRectangle
+    minimum_latitude::Float64
+    maximum_latitude::Float64
+    minimum_longitude::Float64
+    maximum_longitude::Float64
 end
 
 mutable struct PhotoMetadata
@@ -81,13 +87,6 @@ mutable struct PhotoMetadata
     clock_svg_path::Union{String, Nothing}
 end
 
-mutable struct PhotoRectangle
-    minimum_latitude::Float64
-    maximum_latitude::Float64
-    minimum_longitude::Float64
-    maximum_longitude::Float64
-end
-
 
 # accept a single ratio like 1.77 or a width:height pair like 16:9
 function parse_aspect_ratio(value::AbstractString)
@@ -96,10 +95,10 @@ function parse_aspect_ratio(value::AbstractString)
     if occursin(":", s)
         parts = split(s, ":")
         length(parts) == 2 || return nothing
-        w = tryparse(Float64, strip(parts[1]))
-        h = tryparse(Float64, strip(parts[2]))
-        (w === nothing || h === nothing || h == 0) && return nothing
-        return w / h
+        width = tryparse(Float64, strip(parts[1]))
+        height = tryparse(Float64, strip(parts[2]))
+        (width === nothing || height === nothing || height == 0) && return nothing
+        return width / height
     end
     r = tryparse(Float64, s)
     (r === nothing || r <= 0) && return nothing
@@ -109,37 +108,118 @@ end
 
 
 function parse_arguments()
-    include("arguments.jl")
+    s = ArgParseSettings()
+
+    @add_arg_table! s begin
+        "--dir", "-d"
+            help = "the photograph directory to process"
+            arg_type = String
+            default = nothing
+            required = true
+        "--theme-file", "-t"
+            help = "the theme file to use"
+            arg_type = String
+            default = joinpath(@__DIR__, "themes/default_dark.json")
+        "--zoom-area", "-z"
+            help = "the area in degrees^2 for zoomed-in maps (default: 0.125)"
+            arg_type = Float64
+            default = 0.125
+        "--zoom-aspect", "-a"
+            help = "the aspect ratio for zoomed-in maps (default: 16:9)"
+            arg_type = String
+            default = "16:9"
+        "--non-interactive", "-n"
+            help = "disable interactive caption selection when multiple candidates are found"
+            arg_type = Bool
+            default = false
+        "--no-clocks", "-c"
+            help = "disable generation of clock SVGs"
+            arg_type = Bool
+            default = false
+        "--overwrite-clocks", "-o"
+            help = "overwrite existing clock SVGs instead of skipping them"
+            arg_type = Bool
+            default = false
+        "--clock-dir", "-C"
+            help = "directory to write clock SVGs"
+            arg_type = String
+            default = joinpath(@__DIR__, "clocks")
+        "--python", "-p"
+            help = "the python command to use for map rendering"
+            arg_type = String
+            default = "python"
+        "--map-dir", "-m"
+            help = "directory to write locator maps"
+            arg_type = String
+            default = joinpath(@__DIR__, "maps")
+        "--overwrite-maps", "-w"
+            help = "overwrite existing locator maps instead of skipping them"
+            arg_type = Bool
+            default = false
+        "--show-maps", "-s"
+            help = "display locator maps after rendering (default: false)"
+            arg_type = Bool
+            default = false
+        "--no-summary", "-q"
+            help = "disable generation of summary maps for the collection and countries"
+            arg_type = Bool
+            default = false
+        "--summary-min-distance", "-e"
+            help = "the minimum distance in meters between points for summary maps"
+            arg_type = Float64
+            default = 100.0
+        "--summary-dir", "-S"
+            help = "directory to write summary maps"
+            arg_type = String
+            default = joinpath(@__DIR__, "summaries")
+    end
+
     parsed_args = parse_args(s)
 
-    ## TODO fix this to bundle the parsed_args into a CollectionMetadata
+    dir = parsed_args["dir"]
+    theme_file = parsed_args["theme-file"]
+    zoom_area_deg2 = parsed_args["zoom-area"]
+    zoom_aspect_ratio = parse_aspect_ratio(parsed_args["zoom-aspect"])
+    zoom_aspect_ratio === nothing && (zoom_aspect_ratio = 1.0)
+
+    interactive_caption_selection = !parsed_args["non-interactive"]
+    generate_clock_svgs = !parsed_args["no-clocks"]
+    clock_output_dir = parsed_args["clock-dir"]
+    clock_size_px = 64
+    clock_stroke_px = 2.0
+    overwrite_clock_svgs = parsed_args["overwrite-clocks"]
+
+    python_command = parsed_args["python"]
+    snapshot_script = joinpath(@__DIR__, "snapshot.py")
+    map_output_dir = parsed_args["map-dir"]
+    overwrite_maps = parsed_args["overwrite-maps"]
+    show_maps = parsed_args["show-maps"]
+
+    generate_summary_maps = !parsed_args["no-summary"]
+    summary_min_distance_m = parsed_args["summary-min-distance"]
+    summary_output_dir = parsed_args["summary-dir"]
+
     return CollectionMetadata(
-        directory === nothing ? nothing : abspath(directory),
+        dir === nothing ? nothing : abspath(dir),
         theme_file === nothing ? nothing : abspath(theme_file),
         zoom_area_deg2,
         zoom_aspect_ratio,
         interactive_caption_selection,
-        photo_locations,
+        Tuple{Float64, Float64}[],
         generate_clock_svgs,
         clock_output_dir === nothing ? nothing : abspath(clock_output_dir),
         clock_size_px,
         clock_stroke_px,
         overwrite_clock_svgs,
-
         python_command,
         snapshot_script === nothing ? nothing : abspath(snapshot_script),
         map_output_dir === nothing ? nothing : abspath(map_output_dir),
         overwrite_maps,
         show_maps,
-
         generate_summary_maps,
         summary_min_distance_m,
         summary_output_dir === nothing ? nothing : abspath(summary_output_dir),
     )
-end
-
-function canonical_latlon(latitude::Float64, longitude::Float64; digits::Int = 6)
-    return (round(latitude; digits = digits), round(longitude; digits = digits))
 end
 
 
@@ -187,6 +267,7 @@ function union_rect(a::PhotoRectangle, b::PhotoRectangle)
     )
 end
 
+# establish the minimal bounding rectangle that fully ecompasses the given points
 function rect_from_points(points::Vector{Tuple{Float64, Float64}})
     isempty(points) && return nothing
     latitutes = [p[1] for p in points]
@@ -242,9 +323,9 @@ function collection_world_rect(
     # If the span is very wide, prefer a global-ish extent (avoids dateline issues).
     lon_span = world.maximum_longitude - world.minimum_longitude
     if lon_span > 180
-        lat0 = max(-80.0, world.minimum_latitude - 5.0)
-        lat1 = min(80.0, world.maximum_latitude + 5.0)
-        return PhotoRectangle(lat0, lat1, -180.0, 180.0)
+        latitude0 = max(-80.0, world.minimum_latitude - 5.0)
+        latitude1 = min(80.0, world.maximum_latitude + 5.0)
+        return PhotoRectangle(latitude0, latitude1, -180.0, 180.0)
     end
 
     return world
@@ -445,7 +526,7 @@ function build_summary_caption(photo_count::Int, dates::Vector{DateTime})
 end
 
 function write_points_csv(path::AbstractString, points::Vector{Tuple{Float64, Float64}})
-    open(path, "w") do io
+    open(path, "width") do io
         for (latitute, longitude) in points
             println(io, "$(latitute),$(longitude)")
         end
@@ -512,11 +593,11 @@ function clock_svg_string(datetime::DateTime; size_px::Int = 64, stroke_px::Floa
     ring_radius = max(0.0, (size / 2) - stroke_px)
 
     # time fractions
-    h = mod(hour(datetime), 12)
+    height = mod(hour(datetime), 12)
     m = minute(datetime)
     s = second(datetime)
 
-    hour_frac = (h + m / 60 + s / 3600) / 12
+    hour_frac = (height + m / 60 + s / 3600) / 12
     min_frac = (m + s / 60) / 60
 
     function endpoint(frac::Float64, len::Float64)
@@ -559,7 +640,7 @@ function maybe_generate_clock_svg(image_path::AbstractString, datetime::Union{Da
     end
 
     svg = clock_svg_string(datetime; size_px = collection.clock_size_px, stroke_px = collection.clock_stroke_px)
-    open(outpath, "w") do io
+    open(outpath, "width") do io
         write(io, svg)
     end
     return outpath
@@ -593,17 +674,17 @@ function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collect
     # World region: prefer country bounds; otherwise, expand zoom bounds.
     world = md.rectangle
     if world === nothing
-        zr = md.zoom_rectangle
+        rectangle = md.zoom_rectangle
         # Expand zoom by factor for a usable overview.
-        w = (zr.maximum_longitude - zr.minimum_longitude)
-        h = (zr.maximum_latitude - zr.minimum_latitude)
-        lon_pad = max(0.5, 6 * w)
-        lat_pad = max(0.5, 6 * h)
+        width = (rectangle.maximum_longitude - rectangle.minimum_longitude)
+        height = (rectangle.maximum_latitude - rectangle.minimum_latitude)
+        longitude_padded = max(0.5, 6 * width)
+        latitude_padded = max(0.5, 6 * height)
         world = PhotoRectangle(
-            zr.minimum_latitude - lat_pad,
-            zr.maximum_latitude + lat_pad,
-            zr.minimum_longitude - lon_pad,
-            zr.maximum_longitude + lon_pad,
+            rectangle.minimum_latitude - latitude_padded,
+            rectangle.maximum_latitude + latitude_padded,
+            rectangle.minimum_longitude - longitude_padded,
+            rectangle.maximum_longitude + longitude_padded,
         )
     end
 
@@ -738,6 +819,11 @@ function get_directory(collection::CollectionMetadata)
     throw(ArgumentError("Directory must be specified as an argument"))
 end
 
+# round coordinates to eliminate near-duplicates of what are supposed to be the same location
+function canonical_coordinates(latitude::Float64, longitude::Float64; digits::Int = 6)
+    return (round(latitude; digits = digits), round(longitude; digits = digits))
+end
+
 function main()
     collection_metadata = parse_arguments()
     # sanitize and validate the provided directory
@@ -761,12 +847,11 @@ function main()
             push!(valid_dates, metadata.taken_at)
         end
         if metadata !== nothing && metadata.latitude !== nothing && metadata.longitude !== nothing
-            push!(seen_locations, canonical_latlon(metadata.latitude, metadata.longitude))
+            push!(seen_locations, canonical_coordinates(metadata.latitude, metadata.longitude))
             push!(all_gps_points, (metadata.latitude, metadata.longitude))
             city, country = get_city_country_from_coordinates(metadata.latitude, metadata.longitude)
+            
             rectangle = nothing
-            zoom_rectangle = compute_zoom_rectangle(metadata.latitude, metadata.longitude, collection_metadata.zoom_area_deg2, collection_metadata.zoom_aspect_ratio)
-
             if country !== nothing
                 country_lower = lowercase(strip(country))
                 country_row = filter(row -> lowercase(strip(row.name)) == country_lower, results)
@@ -781,15 +866,12 @@ function main()
                 end
             end
 
-            location_string = build_location_string(metadata.selected_caption, city, country)
-            clock_svg_path = maybe_generate_clock_svg(p, metadata.taken_at, collection_metadata)
-
             metadata.city = city
             metadata.country = country
-            metadata.location_string = location_string
+            metadata.location_string = build_location_string(metadata.selected_caption, city, country)
             metadata.rectangle = rectangle
-            metadata.zoom_rectangle = zoom_rectangle
-            metadata.clock_svg_path = clock_svg_path
+            metadata.zoom_rectangle = compute_zoom_rectangle(metadata.latitude, metadata.longitude, collection_metadata.zoom_area_deg2, collection_metadata.zoom_aspect_ratio)
+            metadata.clock_svg_path = maybe_generate_clock_svg(p, metadata.taken_at, collection_metadata)
 
             map_path = maybe_render_map(p, metadata, collection_metadata)
             map_path !== nothing && println("  -> map=$map_path")
@@ -931,3 +1013,5 @@ function main()
     end
 
 end
+
+main()
