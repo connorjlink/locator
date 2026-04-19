@@ -8,6 +8,7 @@ using DataFrames
 using StaticArrays
 using Dates
 using SHA
+using JSON3
 
 gc = Geocoder()
 
@@ -50,6 +51,7 @@ mutable struct CollectionMetadata
     clock_output_dir::Union{String, Nothing}
     clock_size_px::Int
     clock_stroke_px::Float64
+    clock_color::String
     overwrite_clock_svgs::Bool
 
     # python map rendering
@@ -147,7 +149,7 @@ function parse_arguments()
         "--python", "-p"
             help = "the python command to use for map rendering"
             arg_type = String
-            default = "python"
+            default = "python3"
         "--map-dir", "-m"
             help = "directory to write locator maps"
             arg_type = String
@@ -187,6 +189,7 @@ function parse_arguments()
     clock_output_dir = parsed_args["clock-dir"]
     clock_size_px = 64
     clock_stroke_px = 2.0
+    clock_color = theme_file !== nothing ? (JSON3.parsefile(theme_file)["clock_color"]::String) : "#FF0000"
     overwrite_clock_svgs = parsed_args["overwrite-clocks"]
 
     python_command = parsed_args["python"]
@@ -210,6 +213,7 @@ function parse_arguments()
         clock_output_dir === nothing ? nothing : abspath(clock_output_dir),
         clock_size_px,
         clock_stroke_px,
+        clock_color,
         overwrite_clock_svgs,
         python_command,
         snapshot_script === nothing ? nothing : abspath(snapshot_script),
@@ -421,9 +425,7 @@ function compute_zoom_rectangle(latitude::Float64, longitude::Float64, area_deg2
 end
 
 function get_reverse_geocode(latitude::Float64, longitude::Float64)
-    decode(gc, SA[latitude, longitude]) do result
-        return result
-    end
+    return decode(gc, SA[latitude, longitude])
 end
 
 function maybe_getprop(obj, name::Symbol)
@@ -518,8 +520,9 @@ end
 
 function build_summary_caption(photo_count::Int, dates::Vector{DateTime})
     range = build_date_range_string(dates)
-    range === nothing && return "$(photo_count) Photos"
-    return "$(photo_count) Photos. $(range)"
+    photos = photo_count == 1 ? "Photo" : "Photos"
+    range === nothing && return "$(photo_count) $photos"
+    return "$(photo_count) $photos. $(range)"
 end
 
 function write_points_csv(path::AbstractString, points::Vector{Tuple{Float64, Float64}})
@@ -573,7 +576,7 @@ function maybe_render_summary_map(
         push!(cmd_parts, "--no-show")
     end
 
-    cmd = Cmd(cmd_parts)
+    cmd = Cmd(String.(cmd_parts))
     try
         run(cmd)
     catch e
@@ -583,7 +586,7 @@ function maybe_render_summary_map(
     return outpath
 end
 
-function clock_svg_string(datetime::DateTime; size_px::Int = 64, stroke_px::Float64 = 2.0)
+function clock_svg_string(datetime::DateTime; size_px::Int = 64, stroke_px::Float64 = 2.0, clock_color::String = "#FFFFFF")
     size = float(size_px)
     cx = size / 2
     cy = size / 2
@@ -614,10 +617,10 @@ function clock_svg_string(datetime::DateTime; size_px::Int = 64, stroke_px::Floa
     # transparent fill, round caps, slightly thicker hour hand
     return """
 <svg xmlns="http://www.w3.org/2000/svg" width="$(size_px)" height="$(size_px)" viewBox="0 0 $(size_px) $(size_px)">
-  <circle cx="$(cx)" cy="$(cy)" r="$(ring_radius)" fill="none" stroke="black" stroke-width="$(stroke_px)"/>
-  <line x1="$(cx)" y1="$(cy)" x2="$(hx)" y2="$(hy)" stroke="black" stroke-width="$(max(stroke_px, 2.0))" stroke-linecap="round"/>
-  <line x1="$(cx)" y1="$(cy)" x2="$(mx)" y2="$(my)" stroke="black" stroke-width="$(max(1.0, stroke_px))" stroke-linecap="round"/>
-  <circle cx="$(cx)" cy="$(cy)" r="$(max(1.0, stroke_px))" fill="black"/>
+  <circle cx="$(cx)" cy="$(cy)" r="$(ring_radius)" fill="none" stroke="$(clock_color)" stroke-width="$(stroke_px)"/>
+  <line x1="$(cx)" y1="$(cy)" x2="$(hx)" y2="$(hy)" stroke="$(clock_color)" stroke-width="$(max(stroke_px, 2.0))" stroke-linecap="round"/>
+  <line x1="$(cx)" y1="$(cy)" x2="$(mx)" y2="$(my)" stroke="$(clock_color)" stroke-width="$(max(1.0, stroke_px))" stroke-linecap="round"/>
+  <circle cx="$(cx)" cy="$(cy)" r="$(max(1.0, stroke_px))" fill="$(clock_color)"/>
 </svg>
 """
 end
@@ -636,7 +639,7 @@ function maybe_generate_clock_svg(image_path::AbstractString, datetime::Union{Da
         return outpath
     end
 
-    svg = clock_svg_string(datetime; size_px = collection.clock_size_px, stroke_px = collection.clock_stroke_px)
+    svg = clock_svg_string(datetime; size_px = collection.clock_size_px, stroke_px = collection.clock_stroke_px, collection.clock_color)
     open(outpath, "w") do io
         write(io, svg)
     end
@@ -644,11 +647,7 @@ function maybe_generate_clock_svg(image_path::AbstractString, datetime::Union{Da
 end
 
 function build_caption(md::PhotoMetadata)
-    parts = String[]
-    md.date_string !== nothing && push!(parts, md.date_string)
-    md.location_string !== nothing && push!(parts, md.location_string)
-    isempty(parts) && return nothing
-    return join(parts, " • ")
+    return md.date_string
 end
 
 function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collection::CollectionMetadata)
@@ -720,7 +719,7 @@ function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collect
         push!(cmd_parts, "--no-show")
     end
 
-    cmd = Cmd(cmd_parts)
+    cmd = Cmd(String.(cmd_parts))
     try
         run(cmd)
     catch e
@@ -977,7 +976,7 @@ function main()
     println("\n==== Country Map Summary ====")
     for country in sort(collect(keys(by_country)))
         entries = by_country[country]
-        println("\nCountry: $country (photos: $(length(entries)))")
+        println("Country: $country (photos: $(length(entries)))")
         # pick first available country rectangle among entries
         country_rect = nothing
         for (_, md) in entries

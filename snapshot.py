@@ -242,13 +242,13 @@ def _add_svg_badge(ax, svg_path: str, size_px: int, xy_axes: tuple[float, float]
     svg_bytes = Path(svg_path).read_bytes()
     png_bytes = cairosvg.svg2png(bytestring=svg_bytes, output_width=size_px, output_height=size_px)
     image = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-    offset = OffsetImage(image, zoom=1.0)
+    offset = OffsetImage(image, zoom=0.2)
     ab = AnnotationBbox(
         offset,
         xy_axes,
         xycoords=ax.transAxes,
         frameon=False,
-        box_alignment=(0, 0),
+        box_alignment=(1, 0),
         zorder=10,
     )
     ax.add_artist(ab)
@@ -322,7 +322,7 @@ def render_map(
     )
 
     if clock_svg:
-        _add_svg_badge(ax_inset, clock_svg, clock_size_px, (0.02, 0.02))
+        _add_svg_badge(ax_inset, clock_svg, clock_size_px, (0.98, 0.02))
 
     if caption:
         ax_inset.text(
