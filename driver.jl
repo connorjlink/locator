@@ -617,7 +617,7 @@ function clock_svg_string(datetime::DateTime; size_px::Int = 64, stroke_px::Floa
     # transparent fill, round caps, slightly thicker hour hand
     return """
 <svg xmlns="http://www.w3.org/2000/svg" width="$(size_px)" height="$(size_px)" viewBox="0 0 $(size_px) $(size_px)">
-  <circle cx="$(cx)" cy="$(cy)" r="$(ring_radius)" fill="none" stroke="$(clock_color)" stroke-width="$(stroke_px)"/>
+  <circle cx="$(cx)" cy="$(cy)" r="$(ring_radius)" fill="black" stroke="$(clock_color)" stroke-width="$(stroke_px)"/>
   <line x1="$(cx)" y1="$(cy)" x2="$(hx)" y2="$(hy)" stroke="$(clock_color)" stroke-width="$(max(stroke_px, 2.0))" stroke-linecap="round"/>
   <line x1="$(cx)" y1="$(cy)" x2="$(mx)" y2="$(my)" stroke="$(clock_color)" stroke-width="$(max(1.0, stroke_px))" stroke-linecap="round"/>
   <circle cx="$(cx)" cy="$(cy)" r="$(max(1.0, stroke_px))" fill="$(clock_color)"/>

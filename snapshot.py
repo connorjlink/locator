@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import itertools
 import json
 import math
 from dataclasses import dataclass
@@ -254,6 +255,300 @@ def _add_svg_badge(ax, svg_path: str, size_px: int, xy_axes: tuple[float, float]
     ax.add_artist(ab)
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _point_in_rect(
+    x: float,
+    y: float,
+    rect_x0: float,
+    rect_y0: float,
+    rect_x1: float,
+    rect_y1: float,
+    *,
+    pad: float = 0.0,
+) -> bool:
+    return (rect_x0 - pad) <= x <= (rect_x1 + pad) and (rect_y0 - pad) <= y <= (rect_y1 + pad)
+
+
+def _rects_overlap(
+    ax0: float, ay0: float, ax1: float, ay1: float,
+    bx0: float, by0: float, bx1: float, by1: float,
+    *,
+    pad: float = 0.0,
+) -> bool:
+    return not (
+        (ax1 <= bx0 + pad) or
+        (ax0 >= bx1 - pad) or
+        (ay1 <= by0 + pad) or
+        (ay0 >= by1 - pad)
+    )
+
+
+def _rect_distance_sq(
+    ax0: float, ay0: float, ax1: float, ay1: float,
+    bx0: float, by0: float, bx1: float, by1: float,
+) -> float:
+    dx = max(bx0 - ax1, ax0 - bx1, 0.0)
+    dy = max(by0 - ay1, ay0 - by1, 0.0)
+    return dx * dx + dy * dy
+
+
+def _data_to_fig(fig, ax, x: float, y: float) -> tuple[float, float]:
+    x_disp, y_disp = ax.transData.transform((x, y))
+    return fig.transFigure.inverted().transform((x_disp, y_disp))
+
+
+def _segments_intersect(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float], d: tuple[float, float]) -> bool:
+    def orient(p, q, r) -> float:
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    def on_segment(p, q, r) -> bool:
+        return min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and min(p[1], r[1]) <= q[1] <= max(p[1], r[1])
+
+    o1 = orient(a, b, c)
+    o2 = orient(a, b, d)
+    o3 = orient(c, d, a)
+    o4 = orient(c, d, b)
+
+    if o1 == 0 and on_segment(a, c, b):
+        return True
+    if o2 == 0 and on_segment(a, d, b):
+        return True
+    if o3 == 0 and on_segment(c, a, d):
+        return True
+    if o4 == 0 and on_segment(c, b, d):
+        return True
+
+    return (o1 > 0) != (o2 > 0) and (o3 > 0) != (o4 > 0)
+
+
+def _best_connector_pairs(fig, ax_main, ax_inset, zoom_region: Region) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    # zoom corners in fixed order
+    zoom_data = [
+        (zoom_region.minimum_longitude, zoom_region.minimum_latitude),  # bl
+        (zoom_region.maximum_longitude, zoom_region.minimum_latitude),  # br
+        (zoom_region.maximum_longitude, zoom_region.maximum_latitude),  # tr
+        (zoom_region.minimum_longitude, zoom_region.maximum_latitude),  # tl
+    ]
+    zoom_fig = [_data_to_fig(fig, ax_main, x, y) for (x, y) in zoom_data]
+
+    inset_axes = [(0, 0), (1, 0), (1, 1), (0, 1)]  # bl, br, tr, tl
+    inset_fig: list[tuple[float, float]] = []
+    for xa, ya in inset_axes:
+        xd, yd = ax_inset.transAxes.transform((xa, ya))
+        xf, yf = fig.transFigure.inverted().transform((xd, yd))
+        inset_fig.append((xf, yf))
+
+    best_perm: tuple[int, int, int, int] | None = None
+    best_key = (10**9, float("inf"))  # (crossings, total_distance_sq)
+
+    for perm in itertools.permutations(range(4)):
+        segs = [(zoom_fig[i], inset_fig[perm[i]]) for i in range(4)]
+
+        crossings = 0
+        for i in range(4):
+            for j in range(i + 1, 4):
+                if _segments_intersect(segs[i][0], segs[i][1], segs[j][0], segs[j][1]):
+                    crossings += 1
+
+        dist = 0.0
+        for i in range(4):
+            dx = zoom_fig[i][0] - inset_fig[perm[i]][0]
+            dy = zoom_fig[i][1] - inset_fig[perm[i]][1]
+            dist += dx * dx + dy * dy
+
+        key = (crossings, dist)
+        if key < best_key:
+            best_key = key
+            best_perm = perm
+
+    assert best_perm is not None
+    return [(zoom_data[i], inset_axes[best_perm[i]]) for i in range(4)]
+
+
+def _pick_inset_position(
+    *,
+    fig,
+    ax_main,
+    star_lon: float,
+    star_lat: float,
+    inset_size: float,
+    inset_margin: float,
+    bounds_xmin: float,
+    bounds_xmax: float,
+    bounds_ymin: float,
+    bounds_ymax: float,
+    rect_xmin: float,
+    rect_xmax: float,
+    rect_ymin: float,
+    rect_ymax: float,
+) -> tuple[float, float, float]:
+    bounds_w = max(0.0, bounds_xmax - bounds_xmin)
+    bounds_h = max(0.0, bounds_ymax - bounds_ymin)
+
+    max_size = min(bounds_w - 2.0 * inset_margin, bounds_h - 2.0 * inset_margin)
+    max_size = max(0.08, max_size)
+    size = min(inset_size, max_size)
+
+    x_disp, y_disp = ax_main.transData.transform((star_lon, star_lat))
+    star_x, star_y = fig.transFigure.inverted().transform((x_disp, y_disp))
+
+    star_pad = 0.02
+    gap = max(0.002, inset_margin * 0.6)
+    min_clearance = max(gap, 0.008)
+
+    rcx = (rect_xmin + rect_xmax) * 0.5
+    rcy = (rect_ymin + rect_ymax) * 0.5
+
+    # prefer side with more map space available
+    usable_xmin = bounds_xmin + inset_margin
+    usable_xmax = bounds_xmax - inset_margin
+    usable_ymin = bounds_ymin + inset_margin
+    usable_ymax = bounds_ymax - inset_margin
+
+    left_space = max(0.0, rect_xmin - usable_xmin)
+    right_space = max(0.0, usable_xmax - rect_xmax)
+    bottom_space = max(0.0, rect_ymin - usable_ymin)
+    top_space = max(0.0, usable_ymax - rect_ymax)
+
+    x_eps = max(1e-9, 0.02 * bounds_w)
+    y_eps = max(1e-9, 0.02 * bounds_h)
+
+    x_pref = 1 if (right_space - left_space) > x_eps else (-1 if (left_space - right_space) > x_eps else 0)
+    y_pref = 1 if (top_space - bottom_space) > y_eps else (-1 if (bottom_space - top_space) > y_eps else 0)
+
+    def candidate_positions(s: float) -> list[tuple[float, float]]:
+        top = rect_ymax + gap
+        bottom = rect_ymin - s - gap
+        left = rect_xmin - s - gap
+        right = rect_xmax + gap
+        cx = rcx - s * 0.5
+        cy = rcy - s * 0.5
+        return [
+            (right, cy),              # right-adjacent
+            (left, cy),               # left-adjacent
+            (cx, top),                # above-adjacent
+            (cx, bottom),             # below-adjacent
+            (right, top),             # top-right diagonal
+            (left, top),              # top-left diagonal
+            (right, bottom),          # bottom-right diagonal
+            (left, bottom),           # bottom-left diagonal
+            (right, rect_ymin),       # right, lower aligned
+            (right, rect_ymax - s),   # right, upper aligned
+            (left, rect_ymin),        # left, lower aligned
+            (left, rect_ymax - s),    # left, upper aligned
+            (rect_xmin, top),         # above, left aligned
+            (rect_xmax - s, top),     # above, right aligned
+            (rect_xmin, bottom),      # below, left aligned
+            (rect_xmax - s, bottom),  # below, right aligned
+        ]
+
+    def side_penalty(x0: float, y0: float, s: float) -> float:
+        cx = x0 + s * 0.5
+        cy = y0 + s * 0.5
+        p = 0.0
+        if x_pref != 0:
+            on_right = cx >= rcx
+            if (x_pref == 1 and not on_right) or (x_pref == -1 and on_right):
+                p += 1.0
+        if y_pref != 0:
+            on_top = cy >= rcy
+            if (y_pref == 1 and not on_top) or (y_pref == -1 and on_top):
+                p += 0.35
+        return p
+
+    def nudge_away(x0: float, y0: float, s: float) -> tuple[float, float]:
+        for _ in range(6):
+            x1, y1 = x0 + s, y0 + s
+            d2 = _rect_distance_sq(x0, y0, x1, y1, rect_xmin, rect_ymin, rect_xmax, rect_ymax)
+            if d2 >= (min_clearance * min_clearance):
+                break
+
+            need = min_clearance - math.sqrt(max(0.0, d2))
+            ccx = x0 + s * 0.5
+            ccy = y0 + s * 0.5
+            dx = ccx - rcx
+            dy = ccy - rcy
+
+            if abs(dx) >= abs(dy):
+                step = need if dx >= 0 else -need
+                x0 = _clamp(x0 + step, usable_xmin, usable_xmax - s)
+            else:
+                step = need if dy >= 0 else -need
+                y0 = _clamp(y0 + step, usable_ymin, usable_ymax - s)
+
+        return x0, y0
+
+    for _ in range(12):
+        # pass 1: enforce min_clearance
+        # pass 2: allow tighter if no solution
+        for require_clearance in (True, False):
+            best: tuple[float, float] | None = None
+            # (side_penalty, distance_to_zoom, -distance_to_star)
+            best_key = (float("inf"), float("inf"), float("inf"))
+
+            for x0, y0 in candidate_positions(size):
+                x0 = _clamp(x0, usable_xmin, usable_xmax - size)
+                y0 = _clamp(y0, usable_ymin, usable_ymax - size)
+                x1, y1 = x0 + size, y0 + size
+
+                if _point_in_rect(star_x, star_y, x0, y0, x1, y1, pad=star_pad):
+                    continue
+
+                if _rects_overlap(x0, y0, x1, y1, rect_xmin, rect_ymin, rect_xmax, rect_ymax, pad=0.0):
+                    continue
+
+                d_zoom = _rect_distance_sq(x0, y0, x1, y1, rect_xmin, rect_ymin, rect_xmax, rect_ymax)
+                if require_clearance and d_zoom < (min_clearance * min_clearance):
+                    continue
+
+                cx, cy = x0 + size * 0.5, y0 + size * 0.5
+                d_star = (cx - star_x) ** 2 + (cy - star_y) ** 2
+                key = (side_penalty(x0, y0, size), d_zoom, -d_star)
+                if key < best_key:
+                    best_key = key
+                    best = (x0, y0)
+
+            if best is not None:
+                bx, by = nudge_away(best[0], best[1], size)
+                return bx, by, size
+
+        size *= 0.9
+        if size < 0.08:
+            size = 0.08
+
+    # final safe fallback inside map bounds
+    x0 = _clamp(bounds_xmax - size - inset_margin, usable_xmin, usable_xmax - size)
+    y0 = _clamp(bounds_ymax - size - inset_margin, usable_ymin, usable_ymax - size)
+    x0, y0 = nudge_away(x0, y0, size)
+    return x0, y0, size
+
+
+def _expand_world_for_zoom(
+    world_region: Region,
+    zoom_region: Region,
+    *,
+    edge_buffer_frac: float = 0.06,
+    min_buffer_deg: float = 0.03,
+) -> Region:
+    world = world_region.normalized()
+    zoom = zoom_region.normalized()
+
+    lon_span = max(0.01, world.maximum_longitude - world.minimum_longitude)
+    lat_span = max(0.01, world.maximum_latitude - world.minimum_latitude)
+    lon_buf = max(min_buffer_deg, lon_span * edge_buffer_frac)
+    lat_buf = max(min_buffer_deg, lat_span * edge_buffer_frac)
+
+    return Region(
+        min(world.minimum_longitude, zoom.minimum_longitude - lon_buf),
+        max(world.maximum_longitude, zoom.maximum_longitude + lon_buf),
+        min(world.minimum_latitude, zoom.minimum_latitude - lat_buf),
+        max(world.maximum_latitude, zoom.maximum_latitude + lat_buf),
+    ).normalized()
+
+
 def render_map(
     *,
     world_region: Region,
@@ -274,6 +569,8 @@ def render_map(
 
     world_region = world_region.normalized()
     zoom_region = zoom_region.normalized()
+    world_region = _expand_world_for_zoom(world_region, zoom_region)
+
     star_lat, star_lon = star_lat_lon
 
     inset_size = float(theme.get("inset_size", DEFAULT_THEME["inset_size"]))
@@ -291,19 +588,63 @@ def render_map(
     ax_main.add_feature(cfeature.COASTLINE, linewidth=0.5, edgecolor=theme["bordercolor"])
     ax_main.set_aspect("equal", adjustable="box")
 
-    # inset placement: try to avoid covering the star
-    x_fig, y_fig = ax_main.transData.transform((star_lon, star_lat))
-    x_fig, y_fig = fig.transFigure.inverted().transform((x_fig, y_fig))
+    ax_main.plot(
+        star_lon,
+        star_lat,
+        marker="*",
+        color=theme["starcolor"],
+        markersize=10,
+        transform=proj,
+        zorder=7,
+    )
 
-    x0 = min(max(x_fig + inset_margin, inset_margin), 1 - inset_size - inset_margin)
-    y0 = min(max(y_fig + inset_margin, inset_margin), 1 - inset_size - inset_margin)
+    fig.canvas.draw()
+
+    # inset bounds in figure coordinates
+    wx0, wy0 = _data_to_fig(fig, ax_main, world_region.minimum_longitude, world_region.minimum_latitude)
+    wx1, wy1 = _data_to_fig(fig, ax_main, world_region.maximum_longitude, world_region.maximum_latitude)
+    map_xmin, map_xmax = min(wx0, wx1), max(wx0, wx1)
+    map_ymin, map_ymax = min(wy0, wy1), max(wy0, wy1)
+
+    # zoom source data in figure coordinates
+    rx0, ry0 = _data_to_fig(fig, ax_main, zoom_region.minimum_longitude, zoom_region.minimum_latitude)
+    rx1, ry1 = _data_to_fig(fig, ax_main, zoom_region.maximum_longitude, zoom_region.maximum_latitude)
+    rect_xmin, rect_xmax = min(rx0, rx1), max(rx0, rx1)
+    rect_ymin, rect_ymax = min(ry0, ry1), max(ry0, ry1)
+
+    x0, y0, inset_size = _pick_inset_position(
+        fig=fig,
+        ax_main=ax_main,
+        star_lon=star_lon,
+        star_lat=star_lat,
+        inset_size=inset_size,
+        inset_margin=inset_margin,
+        bounds_xmin=map_xmin,
+        bounds_xmax=map_xmax,
+        bounds_ymin=map_ymin,
+        bounds_ymax=map_ymax,
+        rect_xmin=rect_xmin,
+        rect_xmax=rect_xmax,
+        rect_ymin=rect_ymin,
+        rect_ymax=rect_ymax,
+    )
 
     ax_inset = fig.add_axes([x0, y0, inset_size, inset_size], projection=proj, zorder=5)
+    
+    inset_edge = str(theme.get("insetcolor", DEFAULT_THEME["insetcolor"]))
+    if "geo" in ax_inset.spines:
+        ax_inset.spines["geo"].set_edgecolor(inset_edge)
+        ax_inset.spines["geo"].set_linewidth(0.9)
+    else:
+        for spine in ax_inset.spines.values():
+            spine.set_edgecolor(inset_edge)
+            spine.set_linewidth(0.9)
+
     ax_inset.set_extent(zoom_region.as_extent())
     ax_inset.add_feature(cfeature.LAND, facecolor=theme["landcolor"])
     ax_inset.add_feature(cfeature.BORDERS, linewidth=0.25, edgecolor=theme.get("bordercolor", "black"))
     ax_inset.add_feature(cfeature.COASTLINE, linewidth=0.25, edgecolor=theme.get("bordercolor", "black"))
-    ax_inset.add_feature(cfeature.RIVERS, linewidth=0.5, facecolor=theme["watercolor"])
+    ax_inset.add_feature(cfeature.RIVERS, linewidth=0.5, edgecolor=theme["watercolor"])
     ax_inset.add_feature(cfeature.OCEAN, linewidth=0.5, facecolor=theme["watercolor"])
     ax_inset.add_feature(cfeature.LAKES, linewidth=0.5, facecolor=theme["watercolor"])
     ax_inset.plot(star_lon, star_lat, marker="*", color=theme["starcolor"], markersize=9, transform=proj, zorder=5)
@@ -350,80 +691,14 @@ def render_map(
     )
     ax_main.add_patch(rect)
 
-    def data_to_fig(ax, x, y):
-        x_disp, y_disp = ax.transData.transform((x, y))
-        return fig.transFigure.inverted().transform((x_disp, y_disp))
+    fig.canvas.draw()
 
-    rx0, ry0 = data_to_fig(ax_main, zoom_region.minimum_longitude, zoom_region.minimum_latitude)
-    rx1, ry1 = data_to_fig(ax_main, zoom_region.maximum_longitude, zoom_region.maximum_latitude)
-    rect_xmin, rect_xmax = min(rx0, rx1), max(rx0, rx1)
-    rect_ymin, rect_ymax = min(ry0, ry1), max(ry0, ry1)
+    connector_pairs = _best_connector_pairs(fig, ax_main, ax_inset, zoom_region)
 
-    inset_bbox = ax_inset.get_position()
-    eps = 0.005
-
-    if inset_bbox.y0 >= rect_ymax + eps:
-        pos = "below"
-    elif inset_bbox.y1 <= rect_ymin - eps:
-        pos = "above"
-    elif inset_bbox.x1 <= rect_xmin - eps:
-        pos = "right"
-    elif inset_bbox.x0 >= rect_xmax + eps:
-        pos = "left"
-    else:
-        pos = "above"
-
-    if pos == "below":
-        xy = (zoom_region.minimum_longitude, zoom_region.minimum_latitude)
-        ha, va = "left", "top"
-        offset = (5, -5)
-    elif pos == "above":
-        xy = (zoom_region.minimum_longitude, zoom_region.maximum_latitude)
-        ha, va = "left", "bottom"
-        offset = (5, 5)
-    elif pos == "left":
-        xy = (zoom_region.minimum_longitude, (zoom_region.minimum_latitude + zoom_region.maximum_latitude) / 2)
-        ha, va = "right", "center"
-        offset = (-5, 0)
-    else:
-        xy = (zoom_region.maximum_longitude, (zoom_region.minimum_latitude + zoom_region.maximum_latitude) / 2)
-        ha, va = "left", "center"
-        offset = (5, 0)
-
-    ax_main.annotate(
-        title_main,
-        xy=xy,
-        xycoords=ccrs.PlateCarree(),
-        xytext=offset,
-        textcoords="offset points",
-        ha=ha,
-        va=va,
-        fontsize=float(theme.get("title_fontsize", DEFAULT_THEME["title_fontsize"])) ,
-        fontfamily=str(theme.get("fontfamily", DEFAULT_THEME["fontfamily"])) ,
-        color=str(theme.get("textcolor", DEFAULT_THEME["textcolor"])) ,
-        zorder=6,
-    )
-
-    for spine in ax_inset.spines.values():
-        spine.set_edgecolor(theme["insetcolor"])
-        spine.set_linewidth(1.0)
-        spine.set_zorder(5)
-
-    ax_inset.set_aspect("equal", adjustable="box")
-
-    corners_main = [
-        (zoom_region.minimum_longitude, zoom_region.minimum_latitude),
-        (zoom_region.maximum_longitude, zoom_region.minimum_latitude),
-        (zoom_region.minimum_longitude, zoom_region.maximum_latitude),
-        (zoom_region.maximum_longitude, zoom_region.maximum_latitude),
-    ]
-    corners_inset = [(0, 0), (1, 0), (0, 1), (1, 1)]
-
-    for (longitude, latitute), (xB, yB) in zip(corners_main, corners_inset):
-        x_disp, y_disp = ax_main.projection.transform_point(longitude, latitute, ccrs.PlateCarree())
-        conn = ConnectionPatch(
-            xyA=(x_disp, y_disp),
-            coordsA=ax_main.transData,
+    for (longitude, latitute), (xB, yB) in connector_pairs:
+        connection = ConnectionPatch(
+            xyA=(longitude, latitute),
+            coordsA="data",
             xyB=(xB, yB),
             coordsB="axes fraction",
             axesA=ax_main,
@@ -433,8 +708,9 @@ def render_map(
             alpha=0.9,
             zorder=2,
         )
-        fig.add_artist(conn)
+        fig.add_artist(connection)
 
+    # avoid bbox expansion artifacts
     plt.savefig(out_path, bbox_inches="tight", dpi=dpi)
     if show:
         plt.show()
