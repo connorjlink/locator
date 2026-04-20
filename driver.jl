@@ -12,8 +12,57 @@ using JSON3
 
 gc = Geocoder()
 
+const EnvelopeTuple = NamedTuple{(:minx, :miny, :maxx, :maxy), Tuple{Float64, Float64, Float64, Float64}}
+
+# using the master rectangle often produced a bounding box much larger than the expected country outline
+# collecting the envelopes of all constituent parts allows picking a more appropriate tight rectangle
+function collect_part_envelopes(geom)::Vector{EnvelopeTuple}
+    gname = uppercase(strip(String(ArchGDAL.geomname(geom))))
+    gcount = ArchGDAL.ngeom(geom)
+
+    # no recurse into leaf nodes
+    if gname == "POLYGON" || gname == "CURVEPOLYGON"
+        e = ArchGDAL.envelope(geom)
+        return [(minx = e.MinX, miny = e.MinY, maxx = e.MaxX, maxy = e.MaxY)]
+    end
+
+    if gname == "MULTIPOLYGON" || gname == "GEOMETRYCOLLECTION" || gname == "MULTISURFACE"
+        parts = EnvelopeTuple[]
+        for i in 0:(gcount - 1)
+            subgeom = ArchGDAL.getgeom(geom, i)
+            append!(parts, collect_part_envelopes(subgeom))
+        end
+        return parts
+    end
+
+    return EnvelopeTuple[]
+end
+
+function pick_part_envelope_for_point(
+    parts::Vector{EnvelopeTuple},
+    latitude::Float64,
+    longitude::Float64,
+)
+    best = nothing
+    best_area = Inf
+
+    for part in parts
+        if part.minx <= longitude <= part.maxx && part.miny <= latitude <= part.maxy
+            area = (part.maxx - part.minx) * (part.maxy - part.miny)
+            if area < best_area
+                best = part
+                best_area = area
+            end
+        end
+    end
+
+    return best
+end
+
 dataset = ArchGDAL.read("ne_10m_admin_0_countries.shp")
 layer = ArchGDAL.getlayer(dataset, 0)
+
+country_part_envelopes = Dict{String, Vector{EnvelopeTuple}}()
 
 results = DataFrame(
     name = String[],
@@ -27,9 +76,12 @@ results = DataFrame(
 for feature in layer
     geom = ArchGDAL.getgeom(feature)
     envelope = ArchGDAL.envelope(geom)
+    name = ArchGDAL.getfield(feature, "NAME")
+
+    country_part_envelopes[lowercase(strip(name))] = collect_part_envelopes(geom)
 
     push!(results, (
-        ArchGDAL.getfield(feature, "NAME"),
+        name,
         ArchGDAL.getfield(feature, "ISO_A3"),
         envelope.MinX,
         envelope.MinY,
@@ -855,15 +907,31 @@ function main()
             rectangle = nothing
             if country !== nothing
                 country_lower = lowercase(strip(country))
-                country_row = filter(row -> lowercase(strip(row.name)) == country_lower, results)
-                if nrow(country_row) == 1
-                    row = country_row[1, :]
-                    rectangle = PhotoRectangle(
-                        row.minimum_latitude,
-                        row.maximum_latitude,
-                        row.minimum_longitude,
-                        row.maximum_longitude
-                    )
+
+                parts = get(country_part_envelopes, country_lower, EnvelopeTuple[])
+                if !isempty(parts)
+                    selected = pick_part_envelope_for_point(parts, metadata.latitude, metadata.longitude)
+                    if selected !== nothing
+                        rectangle = PhotoRectangle(
+                            selected.miny,
+                            selected.maxy,
+                            selected.minx,
+                            selected.maxx
+                        )
+                    end
+                end
+
+                if rectangle === nothing
+                    country_row = filter(row -> lowercase(strip(row.name)) == country_lower, results)
+                    if nrow(country_row) == 1
+                        row = country_row[1, :]
+                        rectangle = PhotoRectangle(
+                            row.minimum_latitude,
+                            row.maximum_latitude,
+                            row.minimum_longitude,
+                            row.maximum_longitude
+                        )
+                    end
                 end
             end
 
