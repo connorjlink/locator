@@ -259,6 +259,13 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def _gap_px_to_fig(fig, gap_px: float) -> float:
+    px = max(0.0, float(gap_px))
+    width_px = max(1.0, fig.get_figwidth() * fig.dpi)
+    height_px = max(1.0, fig.get_figheight() * fig.dpi)
+    return px / min(width_px, height_px)
+
+
 def _point_in_rect(
     x: float,
     y: float,
@@ -384,6 +391,7 @@ def _pick_inset_position(
     rect_xmax: float,
     rect_ymin: float,
     rect_ymax: float,
+    min_gap_fig: float = 0.005
 ) -> tuple[float, float, float]:
     bounds_w = max(0.0, bounds_xmax - bounds_xmin)
     bounds_h = max(0.0, bounds_ymax - bounds_ymin)
@@ -397,7 +405,7 @@ def _pick_inset_position(
 
     star_pad = 0.02
     gap = max(0.002, inset_margin * 0.6)
-    min_clearance = max(gap, 0.008)
+    min_clearance = max(gap, 0.008, max(0.0, min_gap_fig))
 
     rcx = (rect_xmin + rect_xmax) * 0.5
     rcy = (rect_ymin + rect_ymax) * 0.5
@@ -526,6 +534,103 @@ def _pick_inset_position(
     return x0, y0, size
 
 
+def _pick_inset_position_corner_snap(
+    *,
+    fig,
+    ax_main,
+    star_lon: float,
+    star_lat: float,
+    inset_size: float,
+    inset_margin: float,
+    bounds_xmin: float,
+    bounds_xmax: float,
+    bounds_ymin: float,
+    bounds_ymax: float,
+    rect_xmin: float,
+    rect_xmax: float,
+    rect_ymin: float,
+    rect_ymax: float,
+    min_gap_fig: float = 0.005
+) -> tuple[float, float, float]:
+    bounds_w = max(0.0, bounds_xmax - bounds_xmin)
+    bounds_h = max(0.0, bounds_ymax - bounds_ymin)
+
+    max_size = min(bounds_w - 2.0 * inset_margin, bounds_h - 2.0 * inset_margin)
+    max_size = max(0.08, max_size)
+    size = min(inset_size, max_size)
+
+    min_clearance = max(0.0, min_gap_fig)
+
+    x_disp, y_disp = ax_main.transData.transform((star_lon, star_lat))
+    star_x, star_y = fig.transFigure.inverted().transform((x_disp, y_disp))
+
+    star_pad = 0.02
+    usable_xmin = bounds_xmin + inset_margin
+    usable_xmax = bounds_xmax - inset_margin
+    usable_ymin = bounds_ymin + inset_margin
+    usable_ymax = bounds_ymax - inset_margin
+
+    def corners(s: float) -> list[tuple[float, float]]:
+        return [
+            (usable_xmin, usable_ymin),          # bottom-left
+            (usable_xmax - s, usable_ymin),      # bottom-right
+            (usable_xmax - s, usable_ymax - s),  # top-right
+            (usable_xmin, usable_ymax - s),      # top-left
+        ]
+
+    for _ in range(14):
+        best: tuple[float, float] | None = None
+        # (distance_to_zoom_rect, -distance_to_star)
+        best_key = (float("inf"), float("inf"))
+
+        for x0, y0 in corners(size):
+            x0 = _clamp(x0, usable_xmin, usable_xmax - size)
+            y0 = _clamp(y0, usable_ymin, usable_ymax - size)
+            x1, y1 = x0 + size, y0 + size
+
+            if _rects_overlap(x0, y0, x1, y1, rect_xmin, rect_ymin, rect_xmax, rect_ymax, pad=0.0):
+                continue
+            if _point_in_rect(star_x, star_y, x0, y0, x1, y1, pad=star_pad):
+                continue
+
+            d_zoom = _rect_distance_sq(x0, y0, x1, y1, rect_xmin, rect_ymin, rect_xmax, rect_ymax)
+            if d_zoom < (min_clearance * min_clearance):
+                continue
+            cx, cy = x0 + size * 0.5, y0 + size * 0.5
+            d_star = (cx - star_x) ** 2 + (cy - star_y) ** 2
+            key = (d_zoom, -d_star)
+            if key < best_key:
+                best_key = key
+                best = (x0, y0)
+
+        if best is not None:
+            return best[0], best[1], size
+
+        size *= 0.9
+        if size < 0.08:
+            size = 0.08
+
+    fallback_best: tuple[float, float] | None = None
+    # (overlap_penalty, star_penalty, distance_to_zoom_rect)
+    fallback_key = (10**9, 10**9, float("inf"))
+    for x0, y0 in corners(size):
+        x0 = _clamp(x0, usable_xmin, usable_xmax - size)
+        y0 = _clamp(y0, usable_ymin, usable_ymax - size)
+        x1, y1 = x0 + size, y0 + size
+
+        overlap_penalty = 1 if _rects_overlap(x0, y0, x1, y1, rect_xmin, rect_ymin, rect_xmax, rect_ymax, pad=0.0) else 0
+        star_penalty = 1 if _point_in_rect(star_x, star_y, x0, y0, x1, y1, pad=star_pad) else 0
+        d_zoom = _rect_distance_sq(x0, y0, x1, y1, rect_xmin, rect_ymin, rect_xmax, rect_ymax)
+        gap_penalty = 0 if d_zoom >= (min_clearance * min_clearance) else 1
+        key = (overlap_penalty, star_penalty, gap_penalty, d_zoom)
+        if key < fallback_key:
+            fallback_key = key
+            fallback_best = (x0, y0)
+
+    assert fallback_best is not None
+    return fallback_best[0], fallback_best[1], size
+
+
 def _expand_world_for_zoom(
     world_region: Region,
     zoom_region: Region,
@@ -564,6 +669,7 @@ def render_map(
     fig_width_in: float,
     show: bool,
     clock_size_px: int,
+    inset_placement_mode: str = "smart",
 ) -> None:
     proj = ccrs.PlateCarree()
 
@@ -612,22 +718,41 @@ def render_map(
     rect_xmin, rect_xmax = min(rx0, rx1), max(rx0, rx1)
     rect_ymin, rect_ymax = min(ry0, ry1), max(ry0, ry1)
 
-    x0, y0, inset_size = _pick_inset_position(
-        fig=fig,
-        ax_main=ax_main,
-        star_lon=star_lon,
-        star_lat=star_lat,
-        inset_size=inset_size,
-        inset_margin=inset_margin,
-        bounds_xmin=map_xmin,
-        bounds_xmax=map_xmax,
-        bounds_ymin=map_ymin,
-        bounds_ymax=map_ymax,
-        rect_xmin=rect_xmin,
-        rect_xmax=rect_xmax,
-        rect_ymin=rect_ymin,
-        rect_ymax=rect_ymax,
-    )
+    mode = str(inset_placement_mode).strip().lower()
+    if mode == "corner-snap":
+        x0, y0, inset_size = _pick_inset_position_corner_snap(
+            fig=fig,
+            ax_main=ax_main,
+            star_lon=star_lon,
+            star_lat=star_lat,
+            inset_size=inset_size,
+            inset_margin=inset_margin,
+            bounds_xmin=map_xmin,
+            bounds_xmax=map_xmax,
+            bounds_ymin=map_ymin,
+            bounds_ymax=map_ymax,
+            rect_xmin=rect_xmin,
+            rect_xmax=rect_xmax,
+            rect_ymin=rect_ymin,
+            rect_ymax=rect_ymax,
+        )
+    else:
+        x0, y0, inset_size = _pick_inset_position(
+            fig=fig,
+            ax_main=ax_main,
+            star_lon=star_lon,
+            star_lat=star_lat,
+            inset_size=inset_size,
+            inset_margin=inset_margin,
+            bounds_xmin=map_xmin,
+            bounds_xmax=map_xmax,
+            bounds_ymin=map_ymin,
+            bounds_ymax=map_ymax,
+            rect_xmin=rect_xmin,
+            rect_xmax=rect_xmax,
+            rect_ymin=rect_ymin,
+            rect_ymax=rect_ymax,
+        )
 
     ax_inset = fig.add_axes([x0, y0, inset_size, inset_size], projection=proj, zorder=5)
     
@@ -763,6 +888,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional clock SVG path to render in the inset (requires cairosvg + pillow).",
     )
+    p.add_argument(
+        "--inset-placement",
+        choices=("smart", "corner-snap"),
+        default="smart",
+        help="Inset placement mode: 'smart' (default) or 'corner-snap'.",
+    )
     p.add_argument("--clock-size", type=int, default=64, help="Clock badge size in pixels.")
     p.add_argument("--out", default="locator_map_styled.png", help="Output image path.")
     p.add_argument("--dpi", type=int, default=300, help="Output DPI.")
@@ -817,6 +948,7 @@ def main(argv: list[str] | None = None) -> int:
         fig_width_in=args.fig_width,
         show=not args.no_show,
         clock_size_px=args.clock_size,
+        inset_placement_mode=args.inset_placement,
     )
     return 0
 

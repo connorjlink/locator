@@ -704,6 +704,8 @@ function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collect
         "--title-inset", title_inset,
         "--out", outpath,
         "--dpi", "300",
+        # NOTE: uncomment to simplfify inset placement
+        "--inset-placement", "corner-snap"
     ]
 
     if collection.theme_file !== nothing
