@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Locator Album</title>
+<style>
+:root{
+  --bg: #000000;
+  --card: #0F0F0F;
+  --text: #FFFFFF;
+  --muted: #A4A4A4;
+  --accent: #C8A51C;
+  --accent2: #880000;
+  --water: #29449b;
+  --font: serif;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;padding:24px;background:var(--bg);color:var(--text);
+  font-family:var(--font), system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+header{
+  border:1px solid var(--muted); background:var(--card); border-radius:12px;
+  padding:16px 18px; margin-bottom:18px;
+}
+h1{margin:0 0 8px;font-size:1.5rem}
+.sub{color:var(--muted);font-size:.9rem}
+.summary-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:12px;
+}
+.summary-grid img{
+  width:100%;height:auto;border-radius:10px;border:1px solid var(--muted);display:block;
+}
+.day{
+  margin:18px 0 24px; border-left:4px solid var(--accent); padding-left:10px;
+}
+.day h2{
+  margin:0 0 10px; font-size:1.05rem; color:var(--accent);
+}
+.entries{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:12px;
+}
+.entries.smart{
+  display:flex; flex-wrap:wrap; gap:12px;
+}
+.entries.smart .entry{
+  flex: 1 1 360px;
+}
+.entries.smart .entry.landscape{
+  flex-basis: 460px;
+}
+.entries.smart .entry.portrait{
+  flex-basis: 300px;
+}
+.entry{
+  background:var(--card); border:1px solid var(--muted); border-radius:12px; padding:10px;
+}
+.entry-head{
+  margin-bottom:8px; padding-bottom:6px; border-bottom:1px dashed var(--muted);
+}
+.cap{font-weight:700}
+.meta{font-size:.88rem;color:var(--muted)}
+.pair{
+  display:grid; grid-template-columns:2fr 1fr; gap:8px; align-items:start;
+}
+.pair img{
+  width:100%; height:auto; display:block; border-radius:8px; border:1px solid var(--muted);
+  background:#000;
+}
+.missing{
+  border:1px dashed var(--accent2); border-radius:8px; padding:12px; font-size:.85rem; color:var(--muted);
+}
+small.coords{display:block;margin-top:8px;color:var(--muted)}
+</style>
+</head>
+<body>
+  <header>
+    <h1>Locator Album</h1>
+    <div class="sub">Entries: 5 · Generated: 2026-04-20 10:47 · Pack: chronological</div>
+    
+    <div class="summary-grid">
+      
+      <figure style="margin:0">
+        <img src="summaries/collection-summary.png" alt="collection-summary.png">
+        <figcaption class="sub" style="margin-top:4px">collection-summary.png</figcaption>
+      </figure>
+      
+      <figure style="margin:0">
+        <img src="summaries/country-Ireland.png" alt="country-Ireland.png">
+        <figcaption class="sub" style="margin-top:4px">country-Ireland.png</figcaption>
+      </figure>
+      
+      <figure style="margin:0">
+        <img src="summaries/country-United%20Kingdom.png" alt="country-United Kingdom.png">
+        <figcaption class="sub" style="margin-top:4px">country-United Kingdom.png</figcaption>
+      </figure>
+      
+    </div>
+    
+  </header>
+
+  
+  <section class="day">
+    <h2>Friday, November 15, 2024</h2>
+    <div class="entries">
+      
+      <article class="entry">
+        <div class="entry-head">
+          <div class="cap">Tower Bridge</div>
+          <div class="meta">test1.jpeg · Tower Bridge, Whitechapel, United Kingdom · 09:57:10 · portrait</div>
+        </div>
+        <div class="pair">
+          <img src="test/test1.jpeg" alt="test1.jpeg">
+          <img src="maps/test1.png" alt="Locator map for test1.jpeg">
+        </div>
+        <small class="coords">lat=51.506383, lon=-0.074719</small>
+      </article>
+      
+      <article class="entry">
+        <div class="entry-head">
+          <div class="cap">Tower of London</div>
+          <div class="meta">test4.jpeg · Tower of London, Whitechapel, United Kingdom · 10:19:58 · landscape</div>
+        </div>
+        <div class="pair">
+          <img src="test/test4.jpeg" alt="test4.jpeg">
+          <img src="maps/test4.png" alt="Locator map for test4.jpeg">
+        </div>
+        <small class="coords">lat=51.507300, lon=-0.076686</small>
+      </article>
+      
+      <article class="entry">
+        <div class="entry-head">
+          <div class="cap">Piccadilly Circus</div>
+          <div class="meta">test3.jpeg · Piccadilly Circus, Soho, United Kingdom · 12:11:13 · landscape</div>
+        </div>
+        <div class="pair">
+          <img src="test/test3.jpeg" alt="test3.jpeg">
+          <img src="maps/test3.png" alt="Locator map for test3.jpeg">
+        </div>
+        <small class="coords">lat=51.510125, lon=-0.134322</small>
+      </article>
+      
+    </div>
+  </section>
+  
+  <section class="day">
+    <h2>Saturday, October 26, 2024</h2>
+    <div class="entries">
+      
+      <article class="entry">
+        <div class="entry-head">
+          <div class="cap">Benbulbin</div>
+          <div class="meta">test5.jpeg · Benbulbin, Sligo, Ireland · 18:12:22 · landscape</div>
+        </div>
+        <div class="pair">
+          <img src="test/test5.jpeg" alt="test5.jpeg">
+          <img src="maps/test5.png" alt="Locator map for test5.jpeg">
+        </div>
+        <small class="coords">lat=54.373483, lon=-8.527669</small>
+      </article>
+      
+    </div>
+  </section>
+  
+  <section class="day">
+    <h2>Sunday, October 13, 2024</h2>
+    <div class="entries">
+      
+      <article class="entry">
+        <div class="entry-head">
+          <div class="cap">Kerry Cliffs</div>
+          <div class="meta">test2.jpeg · Kerry Cliffs, Cahersiveen, Ireland · 16:16:09 · landscape</div>
+        </div>
+        <div class="pair">
+          <img src="test/test2.jpeg" alt="test2.jpeg">
+          <img src="maps/test2.png" alt="Locator map for test2.jpeg">
+        </div>
+        <small class="coords">lat=51.868800, lon=-10.385461</small>
+      </article>
+      
+    </div>
+  </section>
+  
+</body>
+</html>

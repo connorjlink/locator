@@ -430,11 +430,11 @@ function choose_caption_for_location(path::AbstractString, captions::Vector{Stri
 
     # accept A/B/C... or 1/2/3...
     if length(choice) == 1 && isletter(choice[1])
-        idx = Int(uppercase(choice[1]) - 'A') + 1
-        return (1 <= idx <= length(captions)) ? captions[idx] : captions[1]
+        index = Int(uppercase(choice[1]) - 'A') + 1
+        return (1 <= index <= length(captions)) ? captions[index] : captions[1]
     end
-    idx = tryparse(Int, choice)
-    return (idx !== nothing && 1 <= idx <= length(captions)) ? captions[idx] : captions[1]
+    index = tryparse(Int, choice)
+    return (index !== nothing && 1 <= index <= length(captions)) ? captions[index] : captions[1]
 end
 
 function parse_exif_datetime(value::AbstractString)
@@ -577,9 +577,29 @@ function build_summary_caption(photo_count::Int, dates::Vector{DateTime})
     return "$(photo_count) $photos. $(range)"
 end
 
-function write_points_csv(path::AbstractString, points::Vector{Tuple{Float64, Float64}})
+function write_points_csv(
+    path::AbstractString,
+    points::Vector{Tuple{Float64, Float64}};
+    comments::Union{Nothing, Vector{String}} = nothing,
+    header_comment::Union{Nothing, String} = nothing,
+)
     open(path, "w") do io
-        for (latitute, longitude) in points
+        if header_comment !== nothing
+            for line in split(header_comment, '\n')
+                s = strip(line)
+                isempty(s) && continue
+                println(io, "# ", s)
+            end
+        end
+
+        for (i, (latitute, longitude)) in enumerate(points)
+            if comments !== nothing && i <= length(comments)
+                c = strip(comments[i])
+                if !isempty(c)
+                    c = replace(c, '\n' => ' ')
+                    println(io, "# ", c)
+                end
+            end
             println(io, "$(latitute),$(longitude)")
         end
     end
@@ -592,6 +612,7 @@ function maybe_render_summary_map(
     outpath::AbstractString,
     collection::CollectionMetadata;
     world_rect::Union{PhotoRectangle, Nothing} = nothing,
+    point_comments::Union{Nothing, Vector{String}} = nothing,
 )
     isempty(points) && return nothing
 
@@ -600,7 +621,7 @@ function maybe_render_summary_map(
     end
 
     points_csv = outpath * ".points.csv"
-    write_points_csv(points_csv, points)
+    write_points_csv(points_csv, points; comments = point_comments, header_comment = caption)
 
     cmd_parts = Any[
         collection.python_command,
@@ -683,9 +704,7 @@ function maybe_generate_clock_svg(image_path::AbstractString, datetime::Union{Da
     outdir === nothing && return nothing
 
     base = sanitize_filename_component(splitext(basename(image_path))[1])
-    hhmm = Dates.format(datetime, "HHMM")
-    digest = bytes2hex(sha1(image_path))[1:10]
-    outpath = joinpath(outdir, "$(base)-$(hhmm)-$(digest).svg")
+    outpath = joinpath(outdir, "$(base).svg")
 
     if isfile(outpath) && !collection.overwrite_clock_svgs
         return outpath
@@ -702,9 +721,17 @@ function build_caption(md::PhotoMetadata)
     return md.date_string
 end
 
+function build_point_comment(path::AbstractString, md::PhotoMetadata)
+    caption = md.selected_caption === nothing ? "NULL" : md.selected_caption
+    location = md.location_string === nothing ? "NULL" : md.location_string
+    date = md.date_string === nothing ? "NULL" : md.date_string
+    taken = md.taken_at === nothing ? "NULL" : Dates.format(md.taken_at, dateformat"yyyy-mm-ddTHH:MM:SS")
+    return "$(basename(path)) | caption=$(caption) | location=$(location) | date=$(date) | taken_at=$(taken)"
+end
+
 function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collection::CollectionMetadata)
     # locator is meaningless without GPS and zoom rectangle
-    (md.latitude === nothing || md.longitude === nothing || md.zoom_rectangle === nothing) && return nothing
+        (md.latitude === nothing || md.longitude === nothing || md.zoom_rectangle === nothing) && return nothing
     collection.snapshot_script === nothing && return nothing
     isfile(collection.snapshot_script) || error("snapshot script not found: $(collection.snapshot_script)")
 
@@ -712,8 +739,7 @@ function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collect
     outdir === nothing && return nothing
 
     base = sanitize_filename_component(splitext(basename(image_path))[1])
-    digest = bytes2hex(sha1(image_path))[1:10]
-    outpath = joinpath(outdir, "$(base)-$(digest).png")
+    outpath = joinpath(outdir, "$(base).png")
 
     if isfile(outpath) && !collection.overwrite_maps
         return outpath
@@ -991,28 +1017,47 @@ function main()
         end
     end
 
-    # render summary maps (collection + per-country)
     summary_outdir = resolve_summary_output_dir(collection_metadata)
     if summary_outdir !== nothing
         world_rect = collection_world_rect(by_country, all_gps_points)
 
         # collection summary
         caption = build_summary_caption(total_photos, valid_dates)
+        collection_points = Tuple{Float64, Float64}[]
+        collection_comments = String[]
+        for path in sort(image_paths)
+            md_any = get(photo_index, path, nothing)
+            md_any === nothing && continue
+            md = md_any
+            if md.latitude !== nothing && md.longitude !== nothing
+                push!(collection_points, (md.latitude, md.longitude))
+                push!(collection_comments, build_point_comment(path, md))
+            end
+        end
         collection_out = joinpath(summary_outdir, "collection-summary.png")
-        maybe_render_summary_map(all_gps_points, caption, collection_out, collection_metadata; world_rect = world_rect)
+        maybe_render_summary_map(
+            collection_points,
+            caption,
+            collection_out,
+            collection_metadata;
+            world_rect = world_rect,
+            point_comments = collection_comments,
+        )
 
         # per-country summaries
         for country in sort(collect(keys(by_country)))
             entries = by_country[country]
             points = Tuple{Float64, Float64}[]
+            comments = String[]
             dates = DateTime[]
             country_rect = nothing
-            for (_, md) in entries
+            for (path, md) in entries
                 if country_rect === nothing && md.rectangle !== nothing
                     country_rect = md.rectangle
                 end
                 if md.latitude !== nothing && md.longitude !== nothing
                     push!(points, (md.latitude, md.longitude))
+                    push!(comments, build_point_comment(path, md))
                 end
                 if md.taken_at !== nothing && is_valid_collection_date(md.taken_at)
                     push!(dates, md.taken_at)
@@ -1022,14 +1067,23 @@ function main()
             cc = sanitize_filename_component(country)
             outpath = joinpath(summary_outdir, "country-$(cc).png")
             cap = build_summary_caption(length(entries), dates)
-            maybe_render_summary_map(points, cap, outpath, collection_metadata; world_rect = country_rect)
+            maybe_render_summary_map(
+                points,
+                cap,
+                outpath,
+                collection_metadata;
+                world_rect = country_rect,
+                point_comments = comments,
+            )
         end
         if !isempty(unknown)
             points = Tuple{Float64, Float64}[]
+            comments = String[]
             dates = DateTime[]
-            for (_, md) in unknown
+            for (path, md) in unknown
                 if md.latitude !== nothing && md.longitude !== nothing
                     push!(points, (md.latitude, md.longitude))
+                    push!(comments, build_point_comment(path, md))
                 end
                 if md.taken_at !== nothing && is_valid_collection_date(md.taken_at)
                     push!(dates, md.taken_at)
@@ -1038,7 +1092,13 @@ function main()
             if !isempty(points)
                 outpath = joinpath(summary_outdir, "country-UNKNOWN.png")
                 cap = build_summary_caption(length(unknown), dates)
-                maybe_render_summary_map(points, cap, outpath, collection_metadata)
+                maybe_render_summary_map(
+                    points,
+                    cap,
+                    outpath,
+                    collection_metadata;
+                    point_comments = comments,
+                )
             end
         end
     end

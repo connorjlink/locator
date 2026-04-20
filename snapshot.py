@@ -82,13 +82,13 @@ def cluster_points(
     clusters: list[tuple[float, float, int]] = []
     for latitute, longitude in points:
         assigned = False
-        for idx, (clat, clon, count) in enumerate(clusters):
+        for index, (clat, clon, count) in enumerate(clusters):
             if haversine_m(latitute, longitude, clat, clon) <= min_distance_m:
                 # update centroid as running mean
                 new_count = count + 1
                 new_lat = (clat * count + latitute) / new_count
                 new_lon = (clon * count + longitude) / new_count
-                clusters[idx] = (new_lat, new_lon, new_count)
+                clusters[index] = (new_lat, new_lon, new_count)
                 assigned = True
                 break
         if not assigned:
@@ -150,6 +150,8 @@ def render_summary_map(
     aspect_main = geographic_aspect(world_region)
     fig_h = fig_width_in * aspect_main
     fig = plt.figure(figsize=(fig_width_in, fig_h), dpi=dpi)
+    fig.patch.set_facecolor(str(theme.get("oceancolor", DEFAULT_THEME["oceancolor"])))
+    fig.patch.set_edgecolor("none")
 
     ax = fig.add_axes([0, 0, 1, 1], projection=proj)
     ax.set_extent(world_region.as_extent())
@@ -179,7 +181,14 @@ def render_summary_map(
             zorder=10,
         )
 
-    plt.savefig(out_path, bbox_inches="tight", dpi=dpi)
+    plt.savefig(
+        out_path,
+        bbox_inches="tight",
+        pad_inches=0,
+        dpi=dpi,
+        facecolor=fig.get_facecolor(),
+        edgecolor="none",
+    )
     if show:
         plt.show()
 
@@ -685,6 +694,8 @@ def render_map(
     aspect_main = geographic_aspect(world_region)
     fig_h = fig_width_in * aspect_main
     fig = plt.figure(figsize=(fig_width_in, fig_h), dpi=dpi)
+    fig.patch.set_facecolor(str(theme.get("oceancolor", DEFAULT_THEME["oceancolor"])))
+    fig.patch.set_edgecolor("none")
 
     ax_main = fig.add_axes([0, 0, 1, 1], projection=proj)
     ax_main.set_extent(world_region.as_extent())
@@ -835,8 +846,14 @@ def render_map(
         )
         fig.add_artist(connection)
 
-    # avoid bbox expansion artifacts
-    plt.savefig(out_path, bbox_inches="tight", dpi=dpi)
+    plt.savefig(
+        out_path,
+        bbox_inches="tight",
+        pad_inches=0,
+        dpi=dpi,
+        facecolor=fig.get_facecolor(),
+        edgecolor="none",
+    )
     if show:
         plt.show()
 
