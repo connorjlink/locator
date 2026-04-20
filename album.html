@@ -44,15 +44,23 @@ h1{margin:0 0 8px;font-size:1.5rem}
 .entries.smart{
   display:flex; flex-wrap:wrap; gap:12px;
 }
-.entries.smart .entry{
-  flex: 1 1 360px;
+.entries.smart .entry{ flex: 1 1 360px; }
+.entries.smart .entry.landscape{ flex-basis: 460px; }
+.entries.smart .entry.portrait{ flex-basis: 300px; }
+
+.entries.masonry{
+  column-width: 380px;
+  column-gap: 12px;
+  display: block;
 }
-.entries.smart .entry.landscape{
-  flex-basis: 460px;
+.entries.masonry .entry{
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 12px;
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
 }
-.entries.smart .entry.portrait{
-  flex-basis: 300px;
-}
+
 .entry{
   background:var(--card); border:1px solid var(--muted); border-radius:12px; padding:10px;
 }
@@ -61,23 +69,188 @@ h1{margin:0 0 8px;font-size:1.5rem}
 }
 .cap{font-weight:700}
 .meta{font-size:.88rem;color:var(--muted)}
-.pair{
-  display:grid; grid-template-columns:2fr 1fr; gap:8px; align-items:start;
+
+.photo-wrap{ position:relative; }
+.photo-wrap img{
+  width:100%; height:auto; display:block; border-radius:8px; border:1px solid var(--muted); background:#000;
 }
-.pair img{
-  width:100%; height:auto; display:block; border-radius:8px; border:1px solid var(--muted);
-  background:#000;
+.photo-hint{
+  margin-top:6px;
+  font-size:.78rem;
+  color:var(--muted);
 }
+
 .missing{
   border:1px dashed var(--accent2); border-radius:8px; padding:12px; font-size:.85rem; color:var(--muted);
 }
 small.coords{display:block;margin-top:8px;color:var(--muted)}
+
+.map-flyover{
+  position:fixed;
+  z-index:9999;
+  width:min(420px, 42vw);
+  max-width:calc(100vw - 16px);
+  background:var(--card);
+  border:1px solid var(--muted);
+  border-radius:10px;
+  box-shadow:0 12px 36px rgba(0,0,0,.45);
+  padding:8px;
+  opacity:0;
+  transform:scale(.98);
+  transition:opacity .12s ease, transform .12s ease;
+  pointer-events:auto;
+  visibility:hidden;
+}
+.map-flyover.visible{
+  opacity:1;
+  transform:scale(1);
+  visibility:visible;
+}
+.map-flyover img{
+  width:100%;
+  height:auto;
+  display:block;
+  border-radius:6px;
+  border:1px solid var(--muted);
+  background:#000;
+}
+.map-flyover .fly-meta{
+  margin-top:6px;
+  color:var(--muted);
+  font-size:.78rem;
+}
+.map-flyover{
+  position:fixed;
+  z-index:9999;
+  width:min(420px, 42vw);
+  max-width:calc(100vw - 16px);
+  background:var(--card);
+  border:1px solid var(--muted);
+  border-radius:10px;
+  box-shadow:0 12px 36px rgba(0,0,0,.45);
+  padding:8px;
+  opacity:0;
+  transform:scale(.98);
+  transition:opacity .12s ease, transform .12s ease;
+  pointer-events:auto;
+  visibility:hidden;
+}
+.map-flyover.visible{
+  opacity:1;
+  transform:scale(1);
+  visibility:visible;
+}
+.map-flyover img{
+  width:100%;
+  height:auto;
+  display:block;
+  border-radius:6px;
+  border:1px solid var(--muted);
+  background:#000;
+  cursor:zoom-in;
+}
+.map-flyover .fly-meta{
+  margin-top:6px;
+  color:var(--muted);
+  font-size:.78rem;
+}
+  .map-flyover .fly-head{
+  margin-bottom:6px;
+  padding-bottom:6px;
+  border-bottom:1px dashed var(--muted);
+}
+.map-flyover .fly-cap{
+  font-weight:700;
+  line-height:1.2;
+}
+.map-flyover .fly-sub{
+  margin-top:2px;
+  color:var(--muted);
+  font-size:.78rem;
+}
+.map-modal{
+  position:fixed;
+  inset:0;
+  z-index:10000;
+  display:none;
+}
+.map-modal.open{ display:block; }
+.map-modal-backdrop{
+  position:absolute;
+  inset:0;
+  background:rgba(0,0,0,.72);
+}
+.map-modal-dialog{
+  position:absolute;
+  inset:24px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  pointer-events:none;
+}
+.map-modal-content{
+  position:relative;
+  max-width:min(1400px, calc(100vw - 48px));
+  max-height:calc(100vh - 48px);
+  background:var(--card);
+  border:1px solid var(--muted);
+  border-radius:12px;
+  padding:10px;
+  box-shadow:0 24px 54px rgba(0,0,0,.55);
+  pointer-events:auto;
+
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+
+.map-modal-content img{
+  display:block;
+  max-width:100%;
+  max-height:calc(100vh - 160px);
+  width:auto;
+  height:auto;
+  border:1px solid var(--muted);
+  border-radius:8px;
+  background:#000;
+  object-fit:contain;
+  flex:1 1 auto;
+  min-height:0;
+}
+.map-modal-head{
+  margin: 0 42px 10px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--muted);
+}
+.map-modal-cap{
+  font-weight:700;
+  line-height:1.2;
+}
+.map-modal-sub{
+  margin-top:2px;
+  color:var(--muted);
+  font-size:.82rem;
+}
+.map-modal-close{
+  position:absolute;
+  top:8px;
+  right:8px;
+  width:32px;
+  height:32px;
+  border-radius:999px;
+  border:1px solid var(--muted);
+  background:var(--bg);
+  color:var(--text);
+  font-size:20px;
+  line-height:1;
+  cursor:pointer;
+}
 </style>
 </head>
 <body>
   <header>
     <h1>Locator Album</h1>
-    <div class="sub">Entries: 5 · Generated: 2026-04-20 10:47 · Pack: chronological</div>
+    <div class="sub">Entries: 5 · Generated: 2026-04-20 11:30 · Pack: masonry</div>
     
     <div class="summary-grid">
       
@@ -103,42 +276,93 @@ small.coords{display:block;margin-top:8px;color:var(--muted)}
   
   <section class="day">
     <h2>Friday, November 15, 2024</h2>
-    <div class="entries">
+    <div class="entries masonry">
       
-      <article class="entry">
+      <article class="entry portrait">
         <div class="entry-head">
           <div class="cap">Tower Bridge</div>
           <div class="meta">test1.jpeg · Tower Bridge, Whitechapel, United Kingdom · 09:57:10 · portrait</div>
         </div>
-        <div class="pair">
-          <img src="test/test1.jpeg" alt="test1.jpeg">
-          <img src="maps/test1.png" alt="Locator map for test1.jpeg">
+
+        <div class="photo-wrap">
+          
+            <img
+              class="photo-trigger"
+              src="test/test1.jpeg"
+              alt="test1.jpeg"
+              data-map-src="maps/test1.png"
+              data-map-alt="Locator map for test1.jpeg"
+              data-caption="Tower Bridge"
+              data-filename="test1.jpeg"
+              data-location="Tower Bridge, Whitechapel, United Kingdom"
+              data-taken="09:57:10"
+              data-orientation="portrait"
+            >
+            
+              <div class="photo-hint">Hover photo to preview locator map</div>
+            
+          
         </div>
-        <small class="coords">lat=51.506383, lon=-0.074719</small>
+
+        <small class="coords">51°30′23″ N, 0°4′29″ W</small>
       </article>
       
-      <article class="entry">
+      <article class="entry landscape">
         <div class="entry-head">
           <div class="cap">Tower of London</div>
           <div class="meta">test4.jpeg · Tower of London, Whitechapel, United Kingdom · 10:19:58 · landscape</div>
         </div>
-        <div class="pair">
-          <img src="test/test4.jpeg" alt="test4.jpeg">
-          <img src="maps/test4.png" alt="Locator map for test4.jpeg">
+
+        <div class="photo-wrap">
+          
+            <img
+              class="photo-trigger"
+              src="test/test4.jpeg"
+              alt="test4.jpeg"
+              data-map-src="maps/test4.png"
+              data-map-alt="Locator map for test4.jpeg"
+              data-caption="Tower of London"
+              data-filename="test4.jpeg"
+              data-location="Tower of London, Whitechapel, United Kingdom"
+              data-taken="10:19:58"
+              data-orientation="landscape"
+            >
+            
+              <div class="photo-hint">Hover photo to preview locator map</div>
+            
+          
         </div>
-        <small class="coords">lat=51.507300, lon=-0.076686</small>
+
+        <small class="coords">51°30′26″ N, 0°4′36″ W</small>
       </article>
       
-      <article class="entry">
+      <article class="entry landscape">
         <div class="entry-head">
           <div class="cap">Piccadilly Circus</div>
           <div class="meta">test3.jpeg · Piccadilly Circus, Soho, United Kingdom · 12:11:13 · landscape</div>
         </div>
-        <div class="pair">
-          <img src="test/test3.jpeg" alt="test3.jpeg">
-          <img src="maps/test3.png" alt="Locator map for test3.jpeg">
+
+        <div class="photo-wrap">
+          
+            <img
+              class="photo-trigger"
+              src="test/test3.jpeg"
+              alt="test3.jpeg"
+              data-map-src="maps/test3.png"
+              data-map-alt="Locator map for test3.jpeg"
+              data-caption="Piccadilly Circus"
+              data-filename="test3.jpeg"
+              data-location="Piccadilly Circus, Soho, United Kingdom"
+              data-taken="12:11:13"
+              data-orientation="landscape"
+            >
+            
+              <div class="photo-hint">Hover photo to preview locator map</div>
+            
+          
         </div>
-        <small class="coords">lat=51.510125, lon=-0.134322</small>
+
+        <small class="coords">51°30′36″ N, 0°8′4″ W</small>
       </article>
       
     </div>
@@ -146,18 +370,35 @@ small.coords{display:block;margin-top:8px;color:var(--muted)}
   
   <section class="day">
     <h2>Saturday, October 26, 2024</h2>
-    <div class="entries">
+    <div class="entries masonry">
       
-      <article class="entry">
+      <article class="entry landscape">
         <div class="entry-head">
           <div class="cap">Benbulbin</div>
           <div class="meta">test5.jpeg · Benbulbin, Sligo, Ireland · 18:12:22 · landscape</div>
         </div>
-        <div class="pair">
-          <img src="test/test5.jpeg" alt="test5.jpeg">
-          <img src="maps/test5.png" alt="Locator map for test5.jpeg">
+
+        <div class="photo-wrap">
+          
+            <img
+              class="photo-trigger"
+              src="test/test5.jpeg"
+              alt="test5.jpeg"
+              data-map-src="maps/test5.png"
+              data-map-alt="Locator map for test5.jpeg"
+              data-caption="Benbulbin"
+              data-filename="test5.jpeg"
+              data-location="Benbulbin, Sligo, Ireland"
+              data-taken="18:12:22"
+              data-orientation="landscape"
+            >
+            
+              <div class="photo-hint">Hover photo to preview locator map</div>
+            
+          
         </div>
-        <small class="coords">lat=54.373483, lon=-8.527669</small>
+
+        <small class="coords">54°22′25″ N, 8°31′40″ W</small>
       </article>
       
     </div>
@@ -165,22 +406,233 @@ small.coords{display:block;margin-top:8px;color:var(--muted)}
   
   <section class="day">
     <h2>Sunday, October 13, 2024</h2>
-    <div class="entries">
+    <div class="entries masonry">
       
-      <article class="entry">
+      <article class="entry landscape">
         <div class="entry-head">
           <div class="cap">Kerry Cliffs</div>
           <div class="meta">test2.jpeg · Kerry Cliffs, Cahersiveen, Ireland · 16:16:09 · landscape</div>
         </div>
-        <div class="pair">
-          <img src="test/test2.jpeg" alt="test2.jpeg">
-          <img src="maps/test2.png" alt="Locator map for test2.jpeg">
+
+        <div class="photo-wrap">
+          
+            <img
+              class="photo-trigger"
+              src="test/test2.jpeg"
+              alt="test2.jpeg"
+              data-map-src="maps/test2.png"
+              data-map-alt="Locator map for test2.jpeg"
+              data-caption="Kerry Cliffs"
+              data-filename="test2.jpeg"
+              data-location="Kerry Cliffs, Cahersiveen, Ireland"
+              data-taken="16:16:09"
+              data-orientation="landscape"
+            >
+            
+              <div class="photo-hint">Hover photo to preview locator map</div>
+            
+          
         </div>
-        <small class="coords">lat=51.868800, lon=-10.385461</small>
+
+        <small class="coords">51°52′8″ N, 10°23′8″ W</small>
       </article>
       
     </div>
   </section>
   
+
+  <div id="mapFlyover" class="map-flyover" aria-hidden="true">
+    <div class="fly-head">
+      <div id="mapFlyoverCap" class="fly-cap"></div>
+      <div id="mapFlyoverSub" class="fly-sub"></div>
+    </div>
+    <img id="mapFlyoverImg" src="" alt="Locator map preview">
+    <div id="mapFlyoverMeta" class="fly-meta">Locator preview · click to magnify</div>
+  </div>
+
+  <div id="mapModal" class="map-modal" aria-hidden="true">
+    <div id="mapModalBackdrop" class="map-modal-backdrop"></div>
+    <div class="map-modal-dialog">
+      <div class="map-modal-content" role="dialog" aria-modal="true" aria-label="Locator map">
+        <button id="mapModalClose" class="map-modal-close" type="button" aria-label="Close">×</button>
+        <div class="map-modal-head">
+          <div id="mapModalCap" class="map-modal-cap"></div>
+          <div id="mapModalSub" class="map-modal-sub"></div>
+        </div>
+        <img id="mapModalImg" src="" alt="Locator map large preview">
+      </div>
+    </div>
+  </div>
+<script>
+(() => {
+  const fly = document.getElementById("mapFlyover");
+  const flyImg = document.getElementById("mapFlyoverImg");
+  const flyMeta = document.getElementById("mapFlyoverMeta");
+  const flyCap = document.getElementById("mapFlyoverCap");
+  const flySub = document.getElementById("mapFlyoverSub");
+  const triggers = Array.from(document.querySelectorAll(".photo-trigger"));
+
+  const modal = document.getElementById("mapModal");
+  const modalImg = document.getElementById("mapModalImg");
+  const modalClose = document.getElementById("mapModalClose");
+  const modalBackdrop = document.getElementById("mapModalBackdrop");
+  const modalCap = document.getElementById("mapModalCap");
+  const modalSub = document.getElementById("mapModalSub");
+
+  if (!fly || !flyImg || !flyMeta || !flyCap || !flySub) return;
+
+  const hasModal = !!(modal && modalImg && modalClose && modalBackdrop && modalCap && modalSub);
+
+  const MARGIN = 8;
+  const EDGE_OVERLAP = 26;
+  const POINTER_PAD = 10;
+
+  let hideTimer = null;
+  let activeTrigger = null;
+  let anchorX = 0, anchorY = 0;
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function clearHideTimer() {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function scheduleHide() {
+    clearHideTimer();
+    hideTimer = setTimeout(hideFlyover, 100);
+  }
+
+  function showFlyover(trigger, clientX, clientY) {
+    const mapSrc = trigger.dataset.mapSrc || "";
+    if (!mapSrc) return;
+
+    activeTrigger = trigger;
+    anchorX = clientX;
+    anchorY = clientY;
+
+    flyImg.src = mapSrc;
+    flyImg.alt = trigger.dataset.mapAlt || "Locator map preview";
+
+    const caption = trigger.dataset.caption || "Unknown";
+    const filename = trigger.dataset.filename || "Unknown";
+    const location = trigger.dataset.location || "Unknown";
+    const taken = trigger.dataset.taken || "Unknown";
+    const orientation = trigger.dataset.orientation || "unknown";
+
+    flyCap.textContent = caption;
+    flySub.textContent = "" + filename + " · " + location + " · " + taken + " · " + orientation;
+
+    flyMeta.textContent = hasModal
+      ? "Locator preview · click to magnify"
+      : "Locator preview";
+
+    fly.classList.add("visible");
+    fly.setAttribute("aria-hidden", "false");
+
+    requestAnimationFrame(() => positionFlyoverFixed(trigger, clientX, clientY));
+  }
+
+  function hideFlyover() {
+    activeTrigger = null;
+    fly.classList.remove("visible");
+    fly.setAttribute("aria-hidden", "true");
+  }
+
+  function positionFlyoverFixed(trigger, clientX, clientY) {
+    if (!fly.classList.contains("visible")) return;
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    const targetW = Math.max(260, Math.min(420, Math.floor(vw * 0.42)));
+    fly.style.width = targetW + "px";
+
+    const tr = trigger.getBoundingClientRect();
+    const fr = fly.getBoundingClientRect();
+    const w = fr.width || targetW;
+    const h = fr.height || 220;
+
+    const preferRight = (tr.left + tr.width / 2) < (vw / 2);
+
+    let x = preferRight ? (tr.right - EDGE_OVERLAP) : (tr.left - w + EDGE_OVERLAP);
+    let y = clientY - h * 0.35;
+
+    if (clientX < x + POINTER_PAD) x = clientX - POINTER_PAD;
+    if (clientX > x + w - POINTER_PAD) x = clientX - w + POINTER_PAD;
+    if (clientY < y + POINTER_PAD) y = clientY - POINTER_PAD;
+    if (clientY > y + h - POINTER_PAD) y = clientY - h + POINTER_PAD;
+
+    x = clamp(x, MARGIN, vw - w - MARGIN);
+    y = clamp(y, MARGIN, vh - h - MARGIN);
+
+    fly.style.left = x + "px";
+    fly.style.top = y + "px";
+  }
+
+  function openModal(src, alt, trigger) {
+    if (!hasModal || !src) return;
+    modalImg.src = src;
+    modalImg.alt = alt || "Locator map large preview";
+
+    const caption = trigger?.dataset.caption || "Unknown";
+    const filename = trigger?.dataset.filename || "Unknown";
+    const location = trigger?.dataset.location || "Unknown";
+    const taken = trigger?.dataset.taken || "Unknown";
+    const orientation = trigger?.dataset.orientation || "unknown";
+
+    modalCap.textContent = caption;
+    modalSub.textContent = "" + filename + " · " + location + " · " + taken + " · " + orientation;
+
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeModal() {
+    if (!hasModal) return;
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+  }
+
+  triggers.forEach((el) => {
+    el.addEventListener("pointerenter", (e) => {
+      clearHideTimer();
+      showFlyover(el, e.clientX, e.clientY);
+    });
+    el.addEventListener("pointerleave", scheduleHide);
+  });
+
+  fly.addEventListener("pointerenter", clearHideTimer);
+  fly.addEventListener("pointerleave", scheduleHide);
+
+  flyImg.addEventListener("click", () => {
+    openModal(flyImg.src, flyImg.alt, activeTrigger || flyImg.closest(".photo-trigger"));
+  });
+
+  if (hasModal) {
+    modalClose.addEventListener("click", closeModal);
+    modalBackdrop.addEventListener("click", closeModal);
+  }
+
+  window.addEventListener("resize", () => {
+    if (activeTrigger && fly.classList.contains("visible")) {
+      positionFlyoverFixed(activeTrigger, anchorX, anchorY);
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (hasModal && modal.classList.contains("open")) {
+      closeModal();
+    } else {
+      hideFlyover();
+    }
+  });
+})();
+</script>
 </body>
 </html>
