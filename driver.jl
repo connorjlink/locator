@@ -366,7 +366,7 @@ function collection_world_rect(
         world = world === nothing ? r : union_rect(world, r)
     end
 
-    # Ensure we still include all points (in case reverse-geocode/country name matching fails).
+    # include every point in case reverse geocode fails
     points_rect = rect_from_points(all_gps_points)
     if world === nothing
         world = points_rect
@@ -376,7 +376,7 @@ function collection_world_rect(
 
     world === nothing && return nothing
 
-    # If the span is very wide, prefer a global-ish extent (avoids dateline issues).
+    # prefer global-ish extend to avoid bounding rect issues
     lon_span = world.maximum_longitude - world.minimum_longitude
     if lon_span > 180
         latitude0 = max(-80.0, world.minimum_latitude - 5.0)
@@ -731,7 +731,7 @@ end
 
 function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collection::CollectionMetadata)
     # locator is meaningless without GPS and zoom rectangle
-        (md.latitude === nothing || md.longitude === nothing || md.zoom_rectangle === nothing) && return nothing
+    (md.latitude === nothing || md.longitude === nothing || md.zoom_rectangle === nothing) && return nothing
     collection.snapshot_script === nothing && return nothing
     isfile(collection.snapshot_script) || error("snapshot script not found: $(collection.snapshot_script)")
 
@@ -745,11 +745,10 @@ function maybe_render_map(image_path::AbstractString, md::PhotoMetadata, collect
         return outpath
     end
 
-    # World region: prefer country bounds; otherwise, expand zoom bounds.
+    # prefer country bounds or expand to fit zoom inset
     world = md.rectangle
     if world === nothing
         rectangle = md.zoom_rectangle
-        # Expand zoom by factor for a usable overview.
         width = (rectangle.maximum_longitude - rectangle.minimum_longitude)
         height = (rectangle.maximum_latitude - rectangle.minimum_latitude)
         longitude_padded = max(0.5, 6 * width)
